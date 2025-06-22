@@ -1,0 +1,16 @@
+{
+  "files": {
+    "main.css": "/mini-app-activity-cliff/static/css/main.3f637495.css",
+    "main.js": "/mini-app-activity-cliff/static/js/main.8a419645.js",
+    "static/js/453.488d5aa8.chunk.js": "/mini-app-activity-cliff/static/js/453.488d5aa8.chunk.js",
+    "static/js/RDKit_minimal.wasm": "/mini-app-activity-cliff/static/js/RDKit_minimal.wasm",
+    "index.html": "/mini-app-activity-cliff/index.html",
+    "main.3f637495.css.map": "/mini-app-activity-cliff/static/css/main.3f637495.css.map",
+    "main.8a419645.js.map": "/mini-app-activity-cliff/static/js/main.8a419645.js.map",
+    "453.488d5aa8.chunk.js.map": "/mini-app-activity-cliff/static/js/453.488d5aa8.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.3f637495.css",
+    "static/js/main.8a419645.js"
+  ]
+}
