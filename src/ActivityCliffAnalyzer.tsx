@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Upload, AlertCircle, TrendingUp, TrendingDown, ChevronDown, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
 import { loadRDKit } from './rdkit';
@@ -7,6 +7,7 @@ interface Compound {
     smiles: string;
     activity: number;
     id: string;
+    svg: string;
 }
 
 interface MatchedPair {
@@ -15,8 +16,6 @@ interface MatchedPair {
     similarity: number;
     activityDiff: number;
     cliffScore: number;
-    svg1: string;
-    svg2: string;
 }
 
 // Styles
@@ -200,9 +199,11 @@ const TerminalPanel: React.FC<{ children: React.ReactNode; style?: React.CSSProp
 export default function ActivityCliffAnalyzer() {
     const [compounds, setCompounds] = useState<Compound[]>([]);
     const [loading, setLoading] = useState(false);
+    const [processingData, setProcessingData] = useState(false);
     const [error, setError] = useState<string>('');
     const [matchedPairs, setMatchedPairs] = useState<MatchedPair[]>([]);
     const [calculatingPairs, setCalculatingPairs] = useState(false);
+    const [calculationProgress, setCalculationProgress] = useState<{ current: number; total: number } | null>(null);
     const [uploadHover, setUploadHover] = useState(false);
     const [duplicateStats, setDuplicateStats] = useState<{ totalEntries: number; uniqueCompounds: number; duplicatesRemoved: number } | null>(null);
 
@@ -210,6 +211,21 @@ export default function ActivityCliffAnalyzer() {
     const [columns, setColumns] = useState<string[]>([]);
     const [smilesColumn, setSmilesColumn] = useState<string>('');
     const [selectedActivityColumn, setSelectedActivityColumn] = useState<string>('');
+    const [copiedSmiles, setCopiedSmiles] = useState<string>('');
+
+    // Ref for smooth progress bar animation
+    const progressBarRef = useRef<HTMLDivElement>(null);
+    const progressAnimationRef = useRef<number | null>(null);
+
+    // Smooth progress update function
+    const updateProgressSmoothly = (current: number, total: number) => {
+        if (progressBarRef.current) {
+            const percentage = (current / total) * 100;
+            progressBarRef.current.style.width = `${percentage}%`;
+        }
+        // Update the text display less frequently to avoid React batching issues
+        setCalculationProgress({ current, total });
+    };
 
     // Tanimoto similarity based on Morgan fingerprints
     const calculateSimilarity = (RDKit: any, s1: string, s2: string): number => {
@@ -253,45 +269,10 @@ export default function ActivityCliffAnalyzer() {
         }
     };
 
-    const getHighlightedSVGs = (RDKit: any, s1: string, s2: string) => {
-        let mol1, mol2, q1, q2;
+    const getCompoundSVG = (RDKit: any, smiles: string): string => {
+        let mol;
         try {
-            mol1 = RDKit.get_mol(s1);
-            mol2 = RDKit.get_mol(s2);
-            q1 = RDKit.get_qmol(s1);
-            q2 = RDKit.get_qmol(s2);
-
-            const n1 = mol1.get_num_atoms();
-            const n2 = mol2.get_num_atoms();
-
-            let match1: any = { atoms: [], bonds: [] };
-            let match2: any = { atoms: [], bonds: [] };
-
-            if (n1 <= n2) {
-                match2 = JSON.parse(mol2.get_substruct_match(q1));
-                if (match2.atoms && match2.atoms.length > 0) {
-                    match1.atoms = Array.from({ length: n1 }, (_, i) => i);
-                    match1.bonds = Array.from({ length: mol1.get_num_bonds() }, (_, i) => i);
-                } else {
-                    match1 = JSON.parse(mol1.get_substruct_match(q2));
-                    if (match1.atoms && match1.atoms.length > 0) {
-                        match2.atoms = Array.from({ length: n2 }, (_, i) => i);
-                        match2.bonds = Array.from({ length: mol2.get_num_bonds() }, (_, i) => i);
-                    }
-                }
-            } else {
-                match1 = JSON.parse(mol1.get_substruct_match(q2));
-                if (match1.atoms && match1.atoms.length > 0) {
-                    match2.atoms = Array.from({ length: n2 }, (_, i) => i);
-                    match2.bonds = Array.from({ length: mol2.get_num_bonds() }, (_, i) => i);
-                } else {
-                    match2 = JSON.parse(mol2.get_substruct_match(q1));
-                    if (match2.atoms && match2.atoms.length > 0) {
-                        match1.atoms = Array.from({ length: n1 }, (_, i) => i);
-                        match1.bonds = Array.from({ length: mol1.get_num_bonds() }, (_, i) => i);
-                    }
-                }
-            }
+            mol = RDKit.get_mol(smiles);
 
             const drawingParams = {
                 width: 200,
@@ -301,18 +282,14 @@ export default function ActivityCliffAnalyzer() {
                     6: [0.25, 0.25, 0.25],   // C - Light grey
                 },
             };
-            const colour = [0, 1, 0];
-            const svg1 = mol1.get_svg_with_highlights(JSON.stringify({ ...match1, ...drawingParams, highlightColour: colour }));
-            const svg2 = mol2.get_svg_with_highlights(JSON.stringify({ ...match2, ...drawingParams, highlightColour: colour }));
-            return { svg1, svg2 };
+            
+            const svg = mol.get_svg_with_highlights(JSON.stringify(drawingParams));
+            return svg;
         } catch (e) {
-            console.error('highlight failed', e);
-            return { svg1: mol1 ? mol1.get_svg() : '', svg2: mol2 ? mol2.get_svg() : '' };
+            console.error('SVG generation failed', e);
+            return mol ? mol.get_svg() : '';
         } finally {
-            if (mol1) mol1.delete();
-            if (mol2) mol2.delete();
-            if (q1) q1.delete();
-            if (q2) q2.delete();
+            if (mol) mol.delete();
         }
     };
 
@@ -330,55 +307,58 @@ export default function ActivityCliffAnalyzer() {
         setMatchedPairs([]);
         setDuplicateStats(null);
 
-        Papa.parse(file, {
-            complete: (result) => {
-                try {
-                    const data = result.data as any[];
-                    if (data.length === 0) {
-                        throw new Error('CSV file is empty');
-                    }
+        // Process CSV in background to prevent UI hanging
+        setTimeout(() => {
+            Papa.parse(file, {
+                complete: (result) => {
+                    try {
+                        const data = result.data as any[];
+                        if (data.length === 0) {
+                            throw new Error('CSV file is empty');
+                        }
 
-                    const headers = Object.keys(data[0] || {});
-                    setColumns(headers);
-                    setRawData(data);
+                        const headers = Object.keys(data[0] || {});
+                        setColumns(headers);
+                        setRawData(data);
 
-                    const detectedSmilesCol = headers.find(h => {
-                        const lower = h.toLowerCase();
-                        return lower.includes('smile') ||
-                            lower === 'structure' ||
-                            lower === 'smiles' ||
-                            lower === 'canonical_smiles' ||
-                            lower === 'isomeric_smiles';
-                    });
-
-                    if (!detectedSmilesCol) {
-                        const sampleRow = data[0];
-                        const likelySmilesCol = headers.find(h => {
-                            const value = sampleRow[h];
-                            return typeof value === 'string' &&
-                                value.length > 5 &&
-                                /[CNOcn\(\)\[\]=]/.test(value);
+                        const detectedSmilesCol = headers.find(h => {
+                            const lower = h.toLowerCase();
+                            return lower.includes('smile') ||
+                                lower === 'structure' ||
+                                lower === 'smiles' ||
+                                lower === 'canonical_smiles' ||
+                                lower === 'isomeric_smiles';
                         });
 
-                        if (likelySmilesCol) {
-                            setSmilesColumn(likelySmilesCol);
-                        } else {
-                            setError('Could not auto-detect SMILES column. Please ensure your CSV contains molecular structures.');
-                        }
-                    } else {
-                        setSmilesColumn(detectedSmilesCol);
-                    }
+                        if (!detectedSmilesCol) {
+                            const sampleRow = data[0];
+                            const likelySmilesCol = headers.find(h => {
+                                const value = sampleRow[h];
+                                return typeof value === 'string' &&
+                                    value.length > 5 &&
+                                    /[CNOcn\(\)\[\]=]/.test(value);
+                            });
 
-                    setLoading(false);
-                } catch (err) {
-                    setError('Error parsing CSV: ' + (err as Error).message);
-                    setLoading(false);
-                }
-            },
-            header: true,
-            skipEmptyLines: true,
-            dynamicTyping: true
-        });
+                            if (likelySmilesCol) {
+                                setSmilesColumn(likelySmilesCol);
+                            } else {
+                                setError('Could not auto-detect SMILES column. Please ensure your CSV contains molecular structures.');
+                            }
+                        } else {
+                            setSmilesColumn(detectedSmilesCol);
+                        }
+
+                        setLoading(false);
+                    } catch (err) {
+                        setError('Error parsing CSV: ' + (err as Error).message);
+                        setLoading(false);
+                    }
+                },
+                header: true,
+                skipEmptyLines: true,
+                dynamicTyping: true
+            });
+        }, 0);
     };
 
     const processData = async () => {
@@ -410,80 +390,153 @@ export default function ActivityCliffAnalyzer() {
                 });
 
             // Convert to processed compounds with average activities
-            const processedCompounds: Compound[] = Array.from(compoundMap.values())
+            const processedCompoundsWithoutSvg: Omit<Compound, 'svg'>[] = Array.from(compoundMap.values())
                 .map((compound, idx) => {
                     const avgActivity = compound.activities.reduce((sum, act) => sum + act, 0) / compound.activities.length;
                     return {
                         smiles: compound.smiles,
                         activity: avgActivity,
                         id: `compound_${idx + 1}`,
-                    } as Compound;
+                    };
                 });
 
-            if (processedCompounds.length === 0) {
+            if (processedCompoundsWithoutSvg.length === 0) {
                 setError('No valid compounds found with both SMILES and activity values');
+                setProcessingData(false);
                 return;
             }
 
             // Calculate duplicate removal statistics
             const totalEntries = rawData.filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined).length;
-            const uniqueCompounds = processedCompounds.length;
+            const uniqueCompounds = processedCompoundsWithoutSvg.length;
             const duplicatesRemoved = totalEntries - uniqueCompounds;
             
             setDuplicateStats({ totalEntries, uniqueCompounds, duplicatesRemoved });
+
+            // Load RDKit and generate SVGs for all compounds
+            const RDKit = await loadRDKit();
+            const processedCompounds: Compound[] = processedCompoundsWithoutSvg.map(compound => ({
+                ...compound,
+                svg: getCompoundSVG(RDKit, compound.smiles)
+            }));
 
             setCompounds(processedCompounds);
             setError('');
             await calculateMatchedPairs(processedCompounds);
         } catch (err) {
             setError('Error processing data: ' + (err as Error).message);
+        } finally {
+            setProcessingData(false);
         }
     };
 
     const calculateMatchedPairs = async (compoundList: Compound[]) => {
         setCalculatingPairs(true);
+        setCalculationProgress(null);
         const pairs: MatchedPair[] = [];
         const similarityThreshold = 0.7; // Fixed threshold
 
         try {
             const RDKit = await loadRDKit();
-            for (let i = 0; i < compoundList.length; i++) {
-                for (let j = i + 1; j < compoundList.length; j++) {
+            
+            const totalComparisons = (compoundList.length * (compoundList.length - 1)) / 2;
+            let completedComparisons = 0;
+            let lastTextUpdate = 0;
+            
+            // Initialize progress bar
+            updateProgressSmoothly(0, totalComparisons);
+            
+            const processChunk = async (chunk: {i: number, j: number}[]) => {
+                for (const { i, j } of chunk) {
                     const similarity = calculateSimilarity(RDKit, compoundList[i].smiles, compoundList[j].smiles);
 
                     if (similarity >= similarityThreshold) {
                         const activityDiff = Math.abs(compoundList[i].activity - compoundList[j].activity);
                         if (activityDiff === 0) continue;
-                        const cliffScore = similarity * activityDiff;
-                        const { svg1, svg2 } = getHighlightedSVGs(RDKit, compoundList[i].smiles, compoundList[j].smiles);
-
+                        const cliffScore = similarity * similarity * similarity * activityDiff;
+                        
                         pairs.push({
                             compound1: { ...compoundList[i] },
                             compound2: { ...compoundList[j] },
                             similarity,
                             activityDiff,
                             cliffScore,
-                            svg1,
-                            svg2
                         });
                     }
+                    completedComparisons++;
+                }
+                
+                // Update progress bar smoothly every frame
+                if (progressAnimationRef.current) {
+                    cancelAnimationFrame(progressAnimationRef.current);
+                }
+                progressAnimationRef.current = requestAnimationFrame(() => {
+                    updateProgressSmoothly(completedComparisons, totalComparisons);
+                });
+                
+                // Update text less frequently to avoid React batching issues
+                const now = performance.now();
+                if (now - lastTextUpdate >= 100) { // Update text every 100ms
+                    setCalculationProgress({ current: completedComparisons, total: totalComparisons });
+                    lastTextUpdate = now;
+                }
+            };
+
+            const allComparisons: {i: number, j: number}[] = [];
+            for (let i = 0; i < compoundList.length; i++) {
+                for (let j = i + 1; j < compoundList.length; j++) {
+                    allComparisons.push({ i, j });
                 }
             }
 
+            // Smaller chunk size for more frequent progress updates
+            const chunkSize = 200; // Even smaller for smoother animation
+            for (let i = 0; i < allComparisons.length; i += chunkSize) {
+                const chunk = allComparisons.slice(i, i + chunkSize);
+                await processChunk(chunk);
+                // Brief yield to keep UI responsive
+                await new Promise(resolve => setTimeout(resolve, 1));
+            }
+
+            // Final progress update
+            updateProgressSmoothly(totalComparisons, totalComparisons);
+            setCalculationProgress({ current: totalComparisons, total: totalComparisons });
+
             pairs.sort((a, b) => b.cliffScore - a.cliffScore);
             setMatchedPairs(pairs);
+
         } catch (err) {
             setError('Error calculating matched pairs: ' + (err as Error).message);
         } finally {
+            // Clean up animation frame
+            if (progressAnimationRef.current) {
+                cancelAnimationFrame(progressAnimationRef.current);
+            }
             setCalculatingPairs(false);
+            setCalculationProgress(null);
         }
     };
 
     useEffect(() => {
         if (selectedActivityColumn && smilesColumn && rawData.length > 0) {
-            processData();
+            // Set processing state immediately for better UX
+            setProcessingData(true);
+            setError('');
+            // Use a micro-task to ensure the UI updates before starting the heavy computation
+            Promise.resolve().then(() => {
+                processData();
+            });
         }
     }, [selectedActivityColumn]);
+
+    // Cleanup animation frames on unmount
+    useEffect(() => {
+        return () => {
+            if (progressAnimationRef.current) {
+                cancelAnimationFrame(progressAnimationRef.current);
+            }
+        };
+    }, []);
 
     const numericColumns = useMemo(() => {
         if (rawData.length === 0) return [];
@@ -505,6 +558,20 @@ export default function ActivityCliffAnalyzer() {
         minute: '2-digit',
         hour12: false
     });
+
+    // Function to handle SMILES copy with tooltip feedback
+    const handleSmilesCopy = async (smiles: string) => {
+        try {
+            await navigator.clipboard.writeText(smiles);
+            setCopiedSmiles(smiles);
+            // Reset the copied state after 3 seconds
+            setTimeout(() => {
+                setCopiedSmiles('');
+            }, 3000);
+        } catch (err) {
+            console.error('Failed to copy SMILES:', err);
+        }
+    };
 
     return (
         <div style={styles.app}>
@@ -594,8 +661,100 @@ export default function ActivityCliffAnalyzer() {
                     )}
 
                     {loading && (
-                        <div style={{ color: 'rgba(255, 255, 255, 0.5)', marginTop: '24px', fontSize: '12px' }}>
-                            PROCESSING FILE...
+                        <div style={{ 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            alignItems: 'center', 
+                            marginTop: '24px', 
+                            padding: '32px',
+                            border: '1px dashed rgba(255, 255, 255, 0.3)',
+                            backgroundColor: 'rgba(255, 255, 255, 0.02)'
+                        }}>
+                            <Loader2 size={32} style={{ 
+                                marginBottom: '16px', 
+                                color: '#22c55e',
+                                animation: 'spin 1s linear infinite' 
+                            }} />
+                            <div style={{ 
+                                fontSize: '14px', 
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                marginBottom: '8px'
+                            }}>
+                                PROCESSING CSV FILE...
+                            </div>
+                            <div style={{ 
+                                fontSize: '12px', 
+                                color: 'rgba(255, 255, 255, 0.5)',
+                                textAlign: 'center'
+                            }}>
+                                Reading file data and parsing CSV structure...
+                                <br />
+                                This may take a moment for large files
+                            </div>
+                        </div>
+                    )}
+
+                    {processingData && (
+                        <div style={{ 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            alignItems: 'center', 
+                            marginTop: '24px', 
+                            padding: '32px',
+                            border: '1px dashed rgba(255, 255, 255, 0.3)',
+                            backgroundColor: 'rgba(255, 255, 255, 0.02)'
+                        }}>
+                            <div style={{ 
+                                fontSize: '14px', 
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                marginBottom: '8px'
+                            }}>
+                                {calculatingPairs ? 'CALCULATING SIMILARITIES...' : 'PROCESSING COMPOUND DATA...'}
+                            </div>
+                            <div style={{ 
+                                fontSize: '12px', 
+                                color: 'rgba(255, 255, 255, 0.5)',
+                                textAlign: 'center',
+                                marginBottom: calculationProgress ? '16px' : '0'
+                            }}>
+                                {calculatingPairs 
+                                    ? 'Analyzing molecular similarities and generating activity cliffs...'
+                                    : 'Analyzing compounds and calculating similarities...'
+                                }
+                                <br />
+                                This may take a moment for large datasets
+                            </div>
+                            {calculationProgress && (
+                                <div style={{ width: '100%', maxWidth: '300px' }}>
+                                    <div style={{ 
+                                        display: 'flex', 
+                                        justifyContent: 'space-between', 
+                                        fontSize: '10px', 
+                                        color: 'rgba(255, 255, 255, 0.5)',
+                                        marginBottom: '8px'
+                                    }}>
+                                        <span>Progress</span>
+                                        <span>{calculationProgress.current.toLocaleString()} / {calculationProgress.total.toLocaleString()}</span>
+                                    </div>
+                                    <div style={{
+                                        width: '100%',
+                                        height: '4px',
+                                        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                                        borderRadius: '2px',
+                                        overflow: 'hidden'
+                                    }}>
+                                        <div 
+                                            ref={progressBarRef}
+                                            style={{
+                                                width: '0%',
+                                                height: '100%',
+                                                backgroundColor: '#22c55e',
+                                                transition: 'none'
+                                            }} 
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -655,12 +814,12 @@ export default function ActivityCliffAnalyzer() {
                                             <td style={styles.td}>
                                                 <div
                                                     style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.svg1 || '' }}
+                                                    dangerouslySetInnerHTML={{ __html: pair.compound1.svg }}
                                                 />
                                                 <div
                                                     style={styles.smiles}
-                                                    title={pair.compound1.smiles}
-                                                    onClick={() => navigator.clipboard.writeText(pair.compound1.smiles)}
+                                                    title={copiedSmiles === pair.compound1.smiles ? "copied" : "click to copy"}
+                                                    onClick={() => handleSmilesCopy(pair.compound1.smiles)}
                                                 >
                                                     {pair.compound1.smiles}
                                                 </div>
@@ -678,12 +837,12 @@ export default function ActivityCliffAnalyzer() {
                                             <td style={styles.td}>
                                                 <div
                                                     style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.svg2 || '' }}
+                                                    dangerouslySetInnerHTML={{ __html: pair.compound2.svg }}
                                                 />
                                                 <div
                                                     style={styles.smiles}
-                                                    title={pair.compound2.smiles}
-                                                    onClick={() => navigator.clipboard.writeText(pair.compound2.smiles)}
+                                                    title={copiedSmiles === pair.compound2.smiles ? "copied" : "click to copy"}
+                                                    onClick={() => handleSmilesCopy(pair.compound2.smiles)}
                                                 >
                                                     {pair.compound2.smiles}
                                                 </div>
