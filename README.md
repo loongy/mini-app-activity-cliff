@@ -61,15 +61,25 @@ loadRDKit().then((RDKit) => {
 
 When bundling with Webpack&nbsp;5 (used by Create React App) you may see errors
 about missing Node core modules such as `fs` or `crypto`. The RDKit.js build
-targets the browser and those modules are not required. Add fallbacks in your
-webpack configuration:
+targets the browser and those modules are not required. Configure fallbacks
+in `craco.config.js` and run the app with `craco`:
 
 ```js
-// Example using craco or a custom webpack setup
-resolve: {
-  fallback: {
-    fs: false,
-    crypto: false,
+// craco.config.js
+module.exports = {
+  webpack: {
+    configure: (config) => {
+      config.resolve = config.resolve || {};
+      config.resolve.fallback = {
+        ...(config.resolve.fallback || {}),
+        fs: false,
+        crypto: false,
+      };
+      return config;
+    },
   },
-},
+};
 ```
+
+The project already includes **@craco/craco**, so running `npm start`,
+`npm test`, or `npm run build` will automatically use this configuration.
