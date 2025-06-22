@@ -16,6 +16,16 @@ interface MatchedPair {
     cliffScore: number;
 }
 
+// RDKit module - we'll load it dynamically
+declare global {
+    interface Window {
+        RDKit: any;
+        // initRDKitModule: any;
+    }
+}
+
+let RDKitModule: any = null;
+
 // Styles
 const styles = {
     app: {
@@ -38,12 +48,12 @@ const styles = {
     title: {
         fontSize: '24px',
         letterSpacing: '2px',
-        color: 'rgba(255, 255, 255, 0.9)',
+        color: '#fff',
         margin: 0
     },
     timestamp: {
         fontSize: '12px',
-        color: 'rgba(255, 255, 255, 0.5)'
+        color: '#fff'
     },
     statusBar: {
         padding: '8px 16px',
@@ -54,27 +64,31 @@ const styles = {
         alignItems: 'center'
     },
     statusReady: {
-        borderColor: 'rgba(234, 179, 8, 0.5)',
+        borderColor: '#22c55e',
+        color: '#22c55e'
+    },
+    statusLoading: {
+        borderColor: '#eab308',
         color: '#eab308'
     },
     panel: {
         position: 'relative' as const,
         backgroundColor: '#000',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
+        border: '1px solid #fff',
         marginBottom: '32px',
         padding: '24px'
     },
     cornerAccent: {
         position: 'absolute' as const,
-        width: '16px',
-        height: '16px',
+        width: '12px',
+        height: '12px',
         borderStyle: 'solid',
-        borderColor: 'rgba(255, 255, 255, 0.4)'
+        borderColor: '#fff'
     },
     uploadArea: {
         width: '100%',
         padding: '32px 16px',
-        border: '1px dashed rgba(255, 255, 255, 0.3)',
+        border: '1px dashed #fff',
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column' as const,
@@ -83,14 +97,15 @@ const styles = {
         backgroundColor: 'transparent'
     },
     uploadAreaHover: {
-        borderColor: 'rgba(255, 255, 255, 0.5)'
+        borderColor: '#fff',
+        borderStyle: 'solid'
     },
     input: {
         width: '100%',
         padding: '8px 12px',
         fontSize: '14px',
         backgroundColor: '#000',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
+        border: '1px solid #fff',
         color: '#fff',
         fontFamily: "'Courier New', Courier, monospace"
     },
@@ -99,7 +114,7 @@ const styles = {
         padding: '8px 12px',
         fontSize: '14px',
         backgroundColor: '#000',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
+        border: '1px solid #fff',
         color: '#fff',
         fontFamily: "'Courier New', Courier, monospace",
         cursor: 'pointer'
@@ -107,7 +122,7 @@ const styles = {
     label: {
         display: 'block',
         fontSize: '12px',
-        color: 'rgba(255, 255, 255, 0.5)',
+        color: '#fff',
         marginBottom: '8px',
         textTransform: 'uppercase' as const
     },
@@ -119,13 +134,13 @@ const styles = {
     th: {
         padding: '12px 16px',
         textAlign: 'left' as const,
-        borderBottom: '1px solid rgba(255, 255, 255, 0.2)',
-        color: 'rgba(255, 255, 255, 0.5)',
+        borderBottom: '1px solid #fff',
+        color: '#fff',
         fontWeight: 'normal'
     },
     td: {
         padding: '12px 16px',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+        borderBottom: '1px solid rgba(255, 255, 255, 0.3)'
     },
     row: {
         transition: 'background-color 0.2s'
@@ -142,7 +157,7 @@ const styles = {
     progressBar: {
         width: '64px',
         height: '4px',
-        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+        backgroundColor: 'rgba(255, 255, 255, 0.3)',
         marginRight: '8px',
         display: 'inline-block',
         position: 'relative' as const
@@ -180,10 +195,11 @@ const styles = {
 // Custom terminal panel component
 const TerminalPanel: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style = {} }) => (
     <div style={{ ...styles.panel, ...style }}>
-        <div style={{ ...styles.cornerAccent, top: 0, left: 0, borderWidth: '2px 0 0 2px' }} />
-        <div style={{ ...styles.cornerAccent, top: 0, right: 0, borderWidth: '2px 2px 0 0' }} />
-        <div style={{ ...styles.cornerAccent, bottom: 0, left: 0, borderWidth: '0 0 2px 2px' }} />
-        <div style={{ ...styles.cornerAccent, bottom: 0, right: 0, borderWidth: '0 2px 2px 0' }} />
+        {/* Corner accents - centered on border lines */}
+        <div style={{ ...styles.cornerAccent, top: -1, left: -1, borderWidth: '2px 0 0 2px' }} />
+        <div style={{ ...styles.cornerAccent, top: -1, right: -1, borderWidth: '2px 2px 0 0' }} />
+        <div style={{ ...styles.cornerAccent, bottom: -1, left: -1, borderWidth: '0 0 2px 2px' }} />
+        <div style={{ ...styles.cornerAccent, bottom: -1, right: -1, borderWidth: '0 2px 2px 0' }} />
         {children}
     </div>
 );
@@ -193,60 +209,72 @@ export default function ActivityCliffAnalyzer() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string>('');
     const [similarityThreshold, setSimilarityThreshold] = useState(0.7);
+    const [rdkitLoaded, setRdkitLoaded] = useState(false);
     const [matchedPairs, setMatchedPairs] = useState<MatchedPair[]>([]);
     const [calculatingPairs, setCalculatingPairs] = useState(false);
     const [uploadHover, setUploadHover] = useState(false);
 
+    // Column selection states
     const [rawData, setRawData] = useState<any[]>([]);
     const [columns, setColumns] = useState<string[]>([]);
     const [smilesColumn, setSmilesColumn] = useState<string>('');
     const [selectedActivityColumn, setSelectedActivityColumn] = useState<string>('');
 
-    // Advanced SMILES-based similarity (fallback for Claude environment)
+    // Initialize RDKit
+    useEffect(() => {
+        const loadRDKit = async () => {
+            try {
+                // Dynamic import to avoid TypeScript issues
+                const rdkitModule = await import('@rdkit/rdkit');
+                const initRDKitModule = rdkitModule.default; // || rdkitModule.initRDKitModule;
+
+                if (typeof initRDKitModule === 'function') {
+                    RDKitModule = await initRDKitModule();
+                    setRdkitLoaded(true);
+                    console.log('RDKit loaded successfully');
+                } else {
+                    // Alternative initialization if the module structure is different
+                    RDKitModule = rdkitModule;
+                    setRdkitLoaded(true);
+                    console.log('RDKit loaded successfully (alternative method)');
+                }
+            } catch (e) {
+                console.error('Failed to load RDKit:', e);
+                setError('Failed to load RDKit. Please refresh the page.');
+            }
+        };
+        loadRDKit();
+    }, []);
+
+    // Calculate similarity using RDKit
     const calculateSimilarity = (smiles1: string, smiles2: string): number => {
-        // Extract chemical features from SMILES
-        const extractFeatures = (smiles: string) => {
-            const features = {
-                rings: (smiles.match(/\d/g) || []).length,
-                aromaticRings: (smiles.toLowerCase().match(/c/g) || []).length,
-                branches: (smiles.match(/\(/g) || []).length,
-                doubleBonds: (smiles.match(/=/g) || []).length,
-                tripleBonds: (smiles.match(/#/g) || []).length,
-                heteroatoms: (smiles.match(/[NOSPFClBrI]/g) || []).length,
-                length: smiles.length,
-                // Functional groups
-                carbonyl: (smiles.match(/C\(=O\)/g) || []).length,
-                hydroxyl: (smiles.match(/O[H]?(?![A-Z])/g) || []).length,
-                amine: (smiles.match(/N(?![A-Z])/g) || []).length,
-                ether: (smiles.match(/COC/g) || []).length,
-                halogen: (smiles.match(/[FClBrI]/g) || []).length,
-            };
-            return features;
-        };
+        if (!RDKitModule) return 0;
 
-        const feat1 = extractFeatures(smiles1);
-        const feat2 = extractFeatures(smiles2);
+        try {
+            const mol1 = RDKitModule.get_mol(smiles1);
+            const mol2 = RDKitModule.get_mol(smiles2);
 
-        // Calculate similarity for each feature
-        const featureSimilarity = (a: number, b: number) => {
-            if (a === 0 && b === 0) return 1;
-            return 1 - Math.abs(a - b) / (a + b);
-        };
+            if (!mol1 || !mol2) {
+                console.warn(`Invalid SMILES: ${!mol1 ? smiles1 : smiles2}`);
+                if (mol1) mol1.delete();
+                if (mol2) mol2.delete();
+                return 0;
+            }
 
-        // Calculate weighted similarity
-        const similarities = [
-            featureSimilarity(feat1.rings, feat2.rings) * 0.15,
-            featureSimilarity(feat1.aromaticRings, feat2.aromaticRings) * 0.15,
-            featureSimilarity(feat1.branches, feat2.branches) * 0.1,
-            featureSimilarity(feat1.doubleBonds, feat2.doubleBonds) * 0.1,
-            featureSimilarity(feat1.heteroatoms, feat2.heteroatoms) * 0.15,
-            featureSimilarity(feat1.carbonyl, feat2.carbonyl) * 0.1,
-            featureSimilarity(feat1.amine, feat2.amine) * 0.1,
-            featureSimilarity(feat1.halogen, feat2.halogen) * 0.1,
-            featureSimilarity(feat1.length, feat2.length) * 0.05,
-        ];
+            const fp1 = mol1.get_morgan_fp(2, 2048);
+            const fp2 = mol2.get_morgan_fp(2, 2048);
+            const similarity = RDKitModule.get_tanimoto_similarity(fp1, fp2);
 
-        return similarities.reduce((a, b) => a + b, 0);
+            mol1.delete();
+            mol2.delete();
+            fp1.delete();
+            fp2.delete();
+
+            return similarity;
+        } catch (e) {
+            console.error('Error calculating similarity:', e);
+            return 0;
+        }
     };
 
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -314,7 +342,7 @@ export default function ActivityCliffAnalyzer() {
     };
 
     const processData = async () => {
-        if (!selectedActivityColumn || !smilesColumn) return;
+        if (!selectedActivityColumn || !smilesColumn || !rdkitLoaded) return;
 
         try {
             const processedCompounds: Compound[] = rawData
@@ -376,13 +404,13 @@ export default function ActivityCliffAnalyzer() {
     };
 
     useEffect(() => {
-        if (selectedActivityColumn && smilesColumn && rawData.length > 0) {
+        if (selectedActivityColumn && smilesColumn && rawData.length > 0 && rdkitLoaded) {
             processData();
         }
-    }, [selectedActivityColumn]);
+    }, [selectedActivityColumn, rdkitLoaded]);
 
     useEffect(() => {
-        if (compounds.length > 0) {
+        if (compounds.length > 0 && rdkitLoaded) {
             calculateMatchedPairs(compounds);
         }
     }, [similarityThreshold]);
@@ -418,18 +446,25 @@ export default function ActivityCliffAnalyzer() {
 
                 <div style={{
                     ...styles.statusBar,
-                    ...styles.statusReady
+                    ...(rdkitLoaded ? styles.statusReady : styles.statusLoading)
                 }}>
-                    <span>► SYSTEM READY :: SMILES-BASED SIMILARITY :: DEMO MODE</span>
+                    {rdkitLoaded ? (
+                        <span>► SYSTEM READY :: RDKit.js LOADED :: MORGAN FINGERPRINTS ACTIVE</span>
+                    ) : (
+                        <>
+                            <Loader2 size={12} style={{ marginRight: '8px', animation: 'spin 1s linear infinite' }} />
+                            INITIALIZING RDKIT MODULE...
+                        </>
+                    )}
                 </div>
 
                 <TerminalPanel>
-                    <h2 style={{ fontSize: '14px', letterSpacing: '1px', marginBottom: '24px', color: 'rgba(255, 255, 255, 0.7)' }}>
+                    <h2 style={{ fontSize: '14px', letterSpacing: '1px', marginBottom: '24px', color: '#fff' }}>
                         FILE UPLOAD
                     </h2>
 
                     <div style={{ marginBottom: '24px' }}>
-                        <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)', marginBottom: '12px' }}>
+                        <div style={{ fontSize: '12px', color: '#fff', marginBottom: '12px' }}>
                             ACCEPTED FORMAT: CSV WITH SMILES AND ACTIVITY DATA
                         </div>
                         <label
@@ -440,13 +475,14 @@ export default function ActivityCliffAnalyzer() {
                             onMouseEnter={() => setUploadHover(true)}
                             onMouseLeave={() => setUploadHover(false)}
                         >
-                            <Upload size={32} style={{ marginBottom: '12px', color: 'rgba(255, 255, 255, 0.5)' }} />
-                            <span style={{ fontSize: '14px', color: 'rgba(255, 255, 255, 0.7)' }}>DROP FILE OR CLICK TO UPLOAD</span>
+                            <Upload size={32} style={{ marginBottom: '12px', color: '#fff' }} />
+                            <span style={{ fontSize: '14px', color: '#fff' }}>DROP FILE OR CLICK TO UPLOAD</span>
                             <input
                                 type="file"
                                 style={{ display: 'none' }}
                                 accept=".csv"
                                 onChange={handleFileUpload}
+                                disabled={!rdkitLoaded}
                             />
                         </label>
                     </div>
@@ -480,7 +516,7 @@ export default function ActivityCliffAnalyzer() {
                                         right: '12px',
                                         top: '50%',
                                         transform: 'translateY(-50%)',
-                                        color: 'rgba(255, 255, 255, 0.4)',
+                                        color: '#fff',
                                         pointerEvents: 'none'
                                     }} />
                                 </div>
@@ -516,13 +552,13 @@ export default function ActivityCliffAnalyzer() {
                     )}
 
                     {loading && (
-                        <div style={{ color: 'rgba(255, 255, 255, 0.5)', marginTop: '24px', fontSize: '12px' }}>
+                        <div style={{ color: '#fff', marginTop: '24px', fontSize: '12px' }}>
                             PROCESSING FILE...
                         </div>
                     )}
 
                     {compounds.length > 0 && (
-                        <div style={{ marginTop: '24px', fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                        <div style={{ marginTop: '24px', fontSize: '12px', color: '#fff' }}>
                             <div>► COMPOUNDS LOADED: {compounds.length}</div>
                             <div>► ACTIVITY COLUMN: {selectedActivityColumn}</div>
                             {calculatingPairs ? (
@@ -540,10 +576,10 @@ export default function ActivityCliffAnalyzer() {
                 {matchedPairs.length > 0 && (
                     <TerminalPanel>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 style={{ fontSize: '14px', letterSpacing: '1px', color: 'rgba(255, 255, 255, 0.7)', margin: 0 }}>
+                            <h2 style={{ fontSize: '14px', letterSpacing: '1px', color: '#fff', margin: 0 }}>
                                 ACTIVITY CLIFF ANALYSIS
                             </h2>
-                            <span style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                            <span style={{ fontSize: '12px', color: '#fff' }}>
                                 SHOWING TOP {Math.min(50, matchedPairs.length)} RESULTS
                             </span>
                         </div>
@@ -566,7 +602,7 @@ export default function ActivityCliffAnalyzer() {
                                     {matchedPairs.slice(0, 50).map((pair, idx) => (
                                         <tr key={idx} style={styles.row} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'}
                                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                            <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.7)' }}>
+                                            <td style={{ ...styles.td, color: '#fff' }}>
                                                 {String(idx + 1).padStart(3, '0')}
                                             </td>
                                             <td style={styles.td}>
@@ -576,11 +612,11 @@ export default function ActivityCliffAnalyzer() {
                                             </td>
                                             <td style={styles.td}>
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                    <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound1.activity.toFixed(3)}</span>
+                                                    <span style={{ color: '#fff' }}>{pair.compound1.activity.toFixed(3)}</span>
                                                     {pair.compound1.activity > pair.compound2.activity ? (
-                                                        <span style={{ marginLeft: '8px', color: '#22c55e' }}>▲</span>
+                                                        <TrendingUp size={16} style={{ marginLeft: '8px', color: '#22c55e' }} />
                                                     ) : (
-                                                        <span style={{ marginLeft: '8px', color: '#ef4444' }}>▼</span>
+                                                        <TrendingDown size={16} style={{ marginLeft: '8px', color: '#ef4444' }} />
                                                     )}
                                                 </div>
                                             </td>
@@ -591,11 +627,11 @@ export default function ActivityCliffAnalyzer() {
                                             </td>
                                             <td style={styles.td}>
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                    <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound2.activity.toFixed(3)}</span>
+                                                    <span style={{ color: '#fff' }}>{pair.compound2.activity.toFixed(3)}</span>
                                                     {pair.compound2.activity > pair.compound1.activity ? (
-                                                        <span style={{ marginLeft: '8px', color: '#22c55e' }}>▲</span>
+                                                        <TrendingUp size={16} style={{ marginLeft: '8px', color: '#22c55e' }} />
                                                     ) : (
-                                                        <span style={{ marginLeft: '8px', color: '#ef4444' }}>▼</span>
+                                                        <TrendingDown size={16} style={{ marginLeft: '8px', color: '#ef4444' }} />
                                                     )}
                                                 </div>
                                             </td>
@@ -604,12 +640,12 @@ export default function ActivityCliffAnalyzer() {
                                                     <div style={styles.progressBar}>
                                                         <div style={{ ...styles.progressFill, width: `${pair.similarity * 100}%` }} />
                                                     </div>
-                                                    <span style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                                                    <span style={{ color: '#fff' }}>
                                                         {(pair.similarity * 100).toFixed(1)}%
                                                     </span>
                                                 </div>
                                             </td>
-                                            <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
+                                            <td style={{ ...styles.td, color: '#fff' }}>
                                                 {pair.activityDiff.toFixed(3)}
                                             </td>
                                             <td style={styles.td}>
@@ -650,6 +686,24 @@ export default function ActivityCliffAnalyzer() {
           border: 2px solid #000;
           cursor: pointer;
           border-radius: 0;
+        }
+        
+        ::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+          background: #000;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.2);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.3);
         }
       `}</style>
         </div>
