@@ -16,6 +16,8 @@ interface MatchedPair {
     similarity: number;
     activityDiff: number;
     cliffScore: number;
+    svg1: string;
+    svg2: string;
 }
 
 // Styles
@@ -210,51 +212,101 @@ export default function ActivityCliffAnalyzer() {
     const [smilesColumn, setSmilesColumn] = useState<string>('');
     const [selectedActivityColumn, setSelectedActivityColumn] = useState<string>('');
 
-    // Advanced SMILES-based similarity (fallback for Claude environment)
-    const calculateSimilarity = (smiles1: string, smiles2: string): number => {
-        // Extract chemical features from SMILES
-        const extractFeatures = (smiles: string) => {
-            const features = {
-                rings: (smiles.match(/\d/g) || []).length,
-                aromaticRings: (smiles.toLowerCase().match(/c/g) || []).length,
-                branches: (smiles.match(/\(/g) || []).length,
-                doubleBonds: (smiles.match(/=/g) || []).length,
-                tripleBonds: (smiles.match(/#/g) || []).length,
-                heteroatoms: (smiles.match(/[NOSPFClBrI]/g) || []).length,
-                length: smiles.length,
-                // Functional groups
-                carbonyl: (smiles.match(/C\(=O\)/g) || []).length,
-                hydroxyl: (smiles.match(/O[H]?(?![A-Z])/g) || []).length,
-                amine: (smiles.match(/N(?![A-Z])/g) || []).length,
-                ether: (smiles.match(/COC/g) || []).length,
-                halogen: (smiles.match(/[FClBrI]/g) || []).length,
+    // Tanimoto similarity based on Morgan fingerprints
+    const calculateSimilarity = (RDKit: any, s1: string, s2: string): number => {
+        try {
+            const mol1 = RDKit.get_mol(s1);
+            const mol2 = RDKit.get_mol(s2);
+            const fp1 = mol1.get_morgan_fp_as_uint8array();
+            const fp2 = mol2.get_morgan_fp_as_uint8array();
+            const popcnt = (arr: Uint8Array) => {
+                let c = 0;
+                for (let i = 0; i < arr.length; i++) {
+                    let v = arr[i];
+                    while (v) {
+                        v &= v - 1;
+                        c++;
+                    }
+                }
+                return c;
             };
-            return features;
-        };
+            const popcntAnd = (a: Uint8Array, b: Uint8Array) => {
+                let c = 0;
+                for (let i = 0; i < a.length; i++) {
+                    let v = a[i] & b[i];
+                    while (v) {
+                        v &= v - 1;
+                        c++;
+                    }
+                }
+                return c;
+            };
+            const ab = popcntAnd(fp1, fp2);
+            const a = popcnt(fp1);
+            const b = popcnt(fp2);
+            mol1.delete();
+            mol2.delete();
+            if (a + b - ab === 0) return 0;
+            return ab / (a + b - ab);
+        } catch (e) {
+            console.error('similarity calc failed', e);
+            return 0;
+        }
+    };
 
-        const feat1 = extractFeatures(smiles1);
-        const feat2 = extractFeatures(smiles2);
+    const getHighlightedSVGs = (RDKit: any, s1: string, s2: string) => {
+        let mol1, mol2, q1, q2;
+        try {
+            mol1 = RDKit.get_mol(s1);
+            mol2 = RDKit.get_mol(s2);
+            q1 = RDKit.get_qmol(s1);
+            q2 = RDKit.get_qmol(s2);
 
-        // Calculate similarity for each feature
-        const featureSimilarity = (a: number, b: number) => {
-            if (a === 0 && b === 0) return 1;
-            return 1 - Math.abs(a - b) / (a + b);
-        };
+            const n1 = mol1.get_num_atoms();
+            const n2 = mol2.get_num_atoms();
 
-        // Calculate weighted similarity
-        const similarities = [
-            featureSimilarity(feat1.rings, feat2.rings) * 0.15,
-            featureSimilarity(feat1.aromaticRings, feat2.aromaticRings) * 0.15,
-            featureSimilarity(feat1.branches, feat2.branches) * 0.1,
-            featureSimilarity(feat1.doubleBonds, feat2.doubleBonds) * 0.1,
-            featureSimilarity(feat1.heteroatoms, feat2.heteroatoms) * 0.15,
-            featureSimilarity(feat1.carbonyl, feat2.carbonyl) * 0.1,
-            featureSimilarity(feat1.amine, feat2.amine) * 0.1,
-            featureSimilarity(feat1.halogen, feat2.halogen) * 0.1,
-            featureSimilarity(feat1.length, feat2.length) * 0.05,
-        ];
+            let match1: any = { atoms: [], bonds: [] };
+            let match2: any = { atoms: [], bonds: [] };
 
-        return similarities.reduce((a, b) => a + b, 0);
+            if (n1 <= n2) {
+                match2 = JSON.parse(mol2.get_substruct_match(q1));
+                if (match2.atoms && match2.atoms.length > 0) {
+                    match1.atoms = Array.from({ length: n1 }, (_, i) => i);
+                    match1.bonds = Array.from({ length: mol1.get_num_bonds() }, (_, i) => i);
+                } else {
+                    match1 = JSON.parse(mol1.get_substruct_match(q2));
+                    if (match1.atoms && match1.atoms.length > 0) {
+                        match2.atoms = Array.from({ length: n2 }, (_, i) => i);
+                        match2.bonds = Array.from({ length: mol2.get_num_bonds() }, (_, i) => i);
+                    }
+                }
+            } else {
+                match1 = JSON.parse(mol1.get_substruct_match(q2));
+                if (match1.atoms && match1.atoms.length > 0) {
+                    match2.atoms = Array.from({ length: n2 }, (_, i) => i);
+                    match2.bonds = Array.from({ length: mol2.get_num_bonds() }, (_, i) => i);
+                } else {
+                    match2 = JSON.parse(mol2.get_substruct_match(q1));
+                    if (match2.atoms && match2.atoms.length > 0) {
+                        match1.atoms = Array.from({ length: n1 }, (_, i) => i);
+                        match1.bonds = Array.from({ length: mol1.get_num_bonds() }, (_, i) => i);
+                    }
+                }
+            }
+
+            const colour = [0, 1, 0];
+            const svg1 = mol1.get_svg_with_highlights(JSON.stringify({ ...match1, highlightColour: colour }));
+            const svg2 = mol2.get_svg_with_highlights(JSON.stringify({ ...match2, highlightColour: colour }));
+            return { svg1, svg2 };
+        } catch (e) {
+            console.error('highlight failed', e);
+            return { svg1: mol1 ? mol1.get_svg() : '', svg2: mol2 ? mol2.get_svg() : '' };
+        } finally {
+            if (mol1) mol1.delete();
+            if (mol2) mol2.delete();
+            if (q1) q1.delete();
+            if (q2) q2.delete();
+        }
     };
 
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -333,8 +385,10 @@ export default function ActivityCliffAnalyzer() {
                     let svg = '';
                     try {
                         const mol = RDKit.get_mol(smiles);
-                        svg = mol.get_svg();
-                        mol.delete();
+                        if (mol && mol.is_valid()) {
+                            svg = mol.get_svg();
+                            mol.delete();
+                        }
                     } catch (e) {
                         console.error('RDKit draw failed', e);
                     }
@@ -365,23 +419,25 @@ export default function ActivityCliffAnalyzer() {
         const pairs: MatchedPair[] = [];
 
         try {
+            const RDKit = await loadRDKit();
             for (let i = 0; i < compoundList.length; i++) {
                 for (let j = i + 1; j < compoundList.length; j++) {
-                    const similarity = calculateSimilarity(
-                        compoundList[i].smiles,
-                        compoundList[j].smiles
-                    );
+                    const similarity = calculateSimilarity(RDKit, compoundList[i].smiles, compoundList[j].smiles);
 
                     if (similarity >= similarityThreshold) {
                         const activityDiff = Math.abs(compoundList[i].activity - compoundList[j].activity);
-                        const cliffScore = similarity * activityDiff;
+                        if (activityDiff === 0) continue;
+                        const cliffScore = similarity / activityDiff;
+                        const { svg1, svg2 } = getHighlightedSVGs(RDKit, compoundList[i].smiles, compoundList[j].smiles);
 
                         pairs.push({
-                            compound1: compoundList[i],
-                            compound2: compoundList[j],
+                            compound1: { ...compoundList[i] },
+                            compound2: { ...compoundList[j] },
                             similarity,
                             activityDiff,
-                            cliffScore
+                            cliffScore,
+                            svg1,
+                            svg2
                         });
                     }
                 }
@@ -604,7 +660,7 @@ export default function ActivityCliffAnalyzer() {
                                             <td style={styles.td}>
                                                 <div
                                                     style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.compound1.svg || '' }}
+                                                    dangerouslySetInnerHTML={{ __html: pair.svg1 || '' }}
                                                 />
                                             </td>
                                             <td style={styles.td}>
@@ -629,7 +685,7 @@ export default function ActivityCliffAnalyzer() {
                                             <td style={styles.td}>
                                                 <div
                                                     style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.compound2.svg || '' }}
+                                                    dangerouslySetInnerHTML={{ __html: pair.svg2 || '' }}
                                                 />
                                             </td>
                                             <td style={styles.td}>
