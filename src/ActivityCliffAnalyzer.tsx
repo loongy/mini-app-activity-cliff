@@ -382,7 +382,7 @@ export default function ActivityCliffAnalyzer() {
                 .filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined)
                 .map((row, idx) => {
                     const smiles = String(row[smilesColumn]).trim();
-                    let svg = '';
+                    let svg = null;
                     try {
                         const mol = RDKit.get_mol(smiles);
                         if (mol && mol.is_valid()) {
