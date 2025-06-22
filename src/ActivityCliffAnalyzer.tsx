@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Upload, AlertCircle, TrendingUp, TrendingDown, ChevronDown, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
+import { loadRDKit } from './rdkit';
 
 interface Compound {
     smiles: string;
     activity: number;
     id: string;
+    svg?: string;
 }
 
 interface MatchedPair {
@@ -137,7 +139,13 @@ const styles = {
         maxWidth: '300px',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap' as const
+        whiteSpace: 'nowrap' as const,
+        cursor: 'pointer'
+    },
+    molImg: {
+        width: '100px',
+        height: '80px',
+        border: '1px solid #fff'
     },
     progressBar: {
         width: '64px',
@@ -317,13 +325,26 @@ export default function ActivityCliffAnalyzer() {
         if (!selectedActivityColumn || !smilesColumn) return;
 
         try {
+            const RDKit = await loadRDKit();
             const processedCompounds: Compound[] = rawData
                 .filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined)
-                .map((row, idx) => ({
-                    smiles: String(row[smilesColumn]).trim(),
-                    activity: parseFloat(row[selectedActivityColumn]),
-                    id: `compound_${idx + 1}`
-                }))
+                .map((row, idx) => {
+                    const smiles = String(row[smilesColumn]).trim();
+                    let svg = '';
+                    try {
+                        const mol = RDKit.get_mol(smiles);
+                        svg = mol.get_svg();
+                        mol.delete();
+                    } catch (e) {
+                        console.error('RDKit draw failed', e);
+                    }
+                    return {
+                        smiles,
+                        activity: parseFloat(row[selectedActivityColumn]),
+                        id: `compound_${idx + 1}`,
+                        svg
+                    } as Compound;
+                })
                 .filter(c => !isNaN(c.activity) && c.smiles.length > 0);
 
             if (processedCompounds.length === 0) {
@@ -554,8 +575,10 @@ export default function ActivityCliffAnalyzer() {
                                     <tr>
                                         <th style={styles.th}>RANK</th>
                                         <th style={styles.th}>COMPOUND_1</th>
+                                        <th style={styles.th}>RENDER_1</th>
                                         <th style={styles.th}>{selectedActivityColumn}_1</th>
                                         <th style={styles.th}>COMPOUND_2</th>
+                                        <th style={styles.th}>RENDER_2</th>
                                         <th style={styles.th}>{selectedActivityColumn}_2</th>
                                         <th style={styles.th}>SIMILARITY</th>
                                         <th style={styles.th}>ΔACTIVITY</th>
@@ -570,9 +593,19 @@ export default function ActivityCliffAnalyzer() {
                                                 {String(idx + 1).padStart(3, '0')}
                                             </td>
                                             <td style={styles.td}>
-                                                <div style={styles.smiles} title={pair.compound1.smiles}>
+                                                <div
+                                                    style={styles.smiles}
+                                                    title={pair.compound1.smiles}
+                                                    onClick={() => navigator.clipboard.writeText(pair.compound1.smiles)}
+                                                >
                                                     {pair.compound1.smiles}
                                                 </div>
+                                            </td>
+                                            <td style={styles.td}>
+                                                <div
+                                                    style={styles.molImg}
+                                                    dangerouslySetInnerHTML={{ __html: pair.compound1.svg || '' }}
+                                                />
                                             </td>
                                             <td style={styles.td}>
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -585,9 +618,19 @@ export default function ActivityCliffAnalyzer() {
                                                 </div>
                                             </td>
                                             <td style={styles.td}>
-                                                <div style={styles.smiles} title={pair.compound2.smiles}>
+                                                <div
+                                                    style={styles.smiles}
+                                                    title={pair.compound2.smiles}
+                                                    onClick={() => navigator.clipboard.writeText(pair.compound2.smiles)}
+                                                >
                                                     {pair.compound2.smiles}
                                                 </div>
+                                            </td>
+                                            <td style={styles.td}>
+                                                <div
+                                                    style={styles.molImg}
+                                                    dangerouslySetInnerHTML={{ __html: pair.compound2.svg || '' }}
+                                                />
                                             </td>
                                             <td style={styles.td}>
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
