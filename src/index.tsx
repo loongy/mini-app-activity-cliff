@@ -3,10 +3,12 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import { loadRDKit } from './rdkit';
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
+loadRDKit().catch((err) => console.error('RDKit init failed', err));
 root.render(
   <React.StrictMode>
     <App />

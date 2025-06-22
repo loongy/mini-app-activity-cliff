@@ -44,3 +44,17 @@ You don’t have to ever use `eject`. The curated feature set is suitable for sm
 You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
 
 To learn React, check out the [React documentation](https://reactjs.org/).
+
+## RDKit.js Initialization Example
+
+This project includes a small helper to load the RDKit.js WebAssembly module.
+Calling `loadRDKit()` will attach the initialized module to `window.RDKit` and
+log the version to the console.
+
+```ts
+import { loadRDKit } from './rdkit';
+
+loadRDKit().then((RDKit) => {
+  console.log('RDKit version', RDKit.version());
+});
+```
