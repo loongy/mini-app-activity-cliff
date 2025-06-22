@@ -58,3 +58,18 @@ loadRDKit().then((RDKit) => {
   console.log('RDKit version', RDKit.version());
 });
 ```
+
+When bundling with Webpack&nbsp;5 (used by Create React App) you may see errors
+about missing Node core modules such as `fs` or `crypto`. The RDKit.js build
+targets the browser and those modules are not required. Add fallbacks in your
+webpack configuration:
+
+```js
+// Example using craco or a custom webpack setup
+resolve: {
+  fallback: {
+    fs: false,
+    crypto: false,
+  },
+},
+```
