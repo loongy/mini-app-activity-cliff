@@ -204,6 +204,7 @@ export default function ActivityCliffAnalyzer() {
     const [matchedPairs, setMatchedPairs] = useState<MatchedPair[]>([]);
     const [calculatingPairs, setCalculatingPairs] = useState(false);
     const [uploadHover, setUploadHover] = useState(false);
+    const [duplicateStats, setDuplicateStats] = useState<{ totalEntries: number; uniqueCompounds: number; duplicatesRemoved: number } | null>(null);
 
     const [rawData, setRawData] = useState<any[]>([]);
     const [columns, setColumns] = useState<string[]>([]);
@@ -295,7 +296,7 @@ export default function ActivityCliffAnalyzer() {
             const drawingParams = {
                 width: 200,
                 height: 150,
-                backgroundColour: [0, 0, 0], // Black background
+                backgroundColour: [0, 0, 0, 0], // Black background
                 atomColourPalette: {
                     6: [0.25, 0.25, 0.25],   // C - Light grey
                 },
@@ -327,6 +328,7 @@ export default function ActivityCliffAnalyzer() {
         setSmilesColumn('');
         setSelectedActivityColumn('');
         setMatchedPairs([]);
+        setDuplicateStats(null);
 
         Papa.parse(file, {
             complete: (result) => {
@@ -383,22 +385,52 @@ export default function ActivityCliffAnalyzer() {
         if (!selectedActivityColumn || !smilesColumn) return;
 
         try {
-            const processedCompounds: Compound[] = rawData
+            // First, collect all compounds with their activities
+            const compoundMap = new Map<string, { smiles: string; activities: number[]; id: string }>();
+            
+            rawData
                 .filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined)
-                .map((row, idx) => {
+                .forEach((row, idx) => {
                     const smiles = String(row[smilesColumn]).trim();
+                    const activity = parseFloat(row[selectedActivityColumn]);
+                    
+                    if (!isNaN(activity) && smiles.length > 0) {
+                        if (compoundMap.has(smiles)) {
+                            // Add to existing compound's activities
+                            compoundMap.get(smiles)!.activities.push(activity);
+                        } else {
+                            // Create new compound entry
+                            compoundMap.set(smiles, {
+                                smiles,
+                                activities: [activity],
+                                id: `compound_${idx + 1}`
+                            });
+                        }
+                    }
+                });
+
+            // Convert to processed compounds with average activities
+            const processedCompounds: Compound[] = Array.from(compoundMap.values())
+                .map((compound, idx) => {
+                    const avgActivity = compound.activities.reduce((sum, act) => sum + act, 0) / compound.activities.length;
                     return {
-                        smiles,
-                        activity: parseFloat(row[selectedActivityColumn]),
+                        smiles: compound.smiles,
+                        activity: avgActivity,
                         id: `compound_${idx + 1}`,
                     } as Compound;
-                })
-                .filter(c => !isNaN(c.activity) && c.smiles.length > 0);
+                });
 
             if (processedCompounds.length === 0) {
                 setError('No valid compounds found with both SMILES and activity values');
                 return;
             }
+
+            // Calculate duplicate removal statistics
+            const totalEntries = rawData.filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined).length;
+            const uniqueCompounds = processedCompounds.length;
+            const duplicatesRemoved = totalEntries - uniqueCompounds;
+            
+            setDuplicateStats({ totalEntries, uniqueCompounds, duplicatesRemoved });
 
             setCompounds(processedCompounds);
             setError('');
@@ -422,7 +454,7 @@ export default function ActivityCliffAnalyzer() {
                     if (similarity >= similarityThreshold) {
                         const activityDiff = Math.abs(compoundList[i].activity - compoundList[j].activity);
                         if (activityDiff === 0) continue;
-                        const cliffScore = activityDiff / (1.01 - similarity);
+                        const cliffScore = activityDiff / (1.0 - similarity);
                         const { svg1, svg2 } = getHighlightedSVGs(RDKit, compoundList[i].smiles, compoundList[j].smiles);
 
                         pairs.push({
@@ -571,6 +603,11 @@ export default function ActivityCliffAnalyzer() {
                         <div style={{ marginTop: '24px', fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
                             <div>► COMPOUNDS LOADED: {compounds.length}</div>
                             <div>► ACTIVITY COLUMN: {selectedActivityColumn}</div>
+                            {duplicateStats && duplicateStats.duplicatesRemoved > 0 && (
+                                <div style={{ color: '#f59e0b', marginTop: '4px' }}>
+                                    ► DUPLICATES REMOVED: {duplicateStats.duplicatesRemoved} entries → {duplicateStats.uniqueCompounds} unique compounds
+                                </div>
+                            )}
                             {calculatingPairs ? (
                                 <div style={{ display: 'flex', alignItems: 'center', marginTop: '4px' }}>
                                     <Loader2 size={12} style={{ marginRight: '8px', animation: 'spin 1s linear infinite' }} />
