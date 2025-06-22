@@ -60,7 +60,7 @@ const styles = {
     panel: {
         position: 'relative' as const,
         backgroundColor: '#000',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
+        border: '1px solid #fff',
         marginBottom: '32px',
         padding: '24px'
     },
@@ -69,12 +69,12 @@ const styles = {
         width: '16px',
         height: '16px',
         borderStyle: 'solid',
-        borderColor: 'rgba(255, 255, 255, 0.4)'
+        borderColor: '#fff'
     },
     uploadArea: {
         width: '100%',
         padding: '32px 16px',
-        border: '1px dashed rgba(255, 255, 255, 0.3)',
+        border: '1px dashed #fff',
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column' as const,
@@ -90,7 +90,7 @@ const styles = {
         padding: '8px 12px',
         fontSize: '14px',
         backgroundColor: '#000',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
+        border: '1px solid #fff',
         color: '#fff',
         fontFamily: "'Courier New', Courier, monospace"
     },
@@ -99,7 +99,7 @@ const styles = {
         padding: '8px 12px',
         fontSize: '14px',
         backgroundColor: '#000',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
+        border: '1px solid #fff',
         color: '#fff',
         fontFamily: "'Courier New', Courier, monospace",
         cursor: 'pointer'
@@ -119,13 +119,13 @@ const styles = {
     th: {
         padding: '12px 16px',
         textAlign: 'left' as const,
-        borderBottom: '1px solid rgba(255, 255, 255, 0.2)',
+        borderBottom: '1px solid #fff',
         color: 'rgba(255, 255, 255, 0.5)',
         fontWeight: 'normal'
     },
     td: {
         padding: '12px 16px',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+        borderBottom: '1px solid #fff'
     },
     row: {
         transition: 'background-color 0.2s'
@@ -180,10 +180,10 @@ const styles = {
 // Custom terminal panel component
 const TerminalPanel: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style = {} }) => (
     <div style={{ ...styles.panel, ...style }}>
-        <div style={{ ...styles.cornerAccent, top: 0, left: 0, borderWidth: '2px 0 0 2px' }} />
-        <div style={{ ...styles.cornerAccent, top: 0, right: 0, borderWidth: '2px 2px 0 0' }} />
-        <div style={{ ...styles.cornerAccent, bottom: 0, left: 0, borderWidth: '0 0 2px 2px' }} />
-        <div style={{ ...styles.cornerAccent, bottom: 0, right: 0, borderWidth: '0 2px 2px 0' }} />
+        <div style={{ ...styles.cornerAccent, top: '-2px', left: '-2px', borderWidth: '3px 0 0 3px' }} />
+        <div style={{ ...styles.cornerAccent, top: '-2px', right: '-2px', borderWidth: '3px 3px 0 0' }} />
+        <div style={{ ...styles.cornerAccent, bottom: '-2px', left: '-2px', borderWidth: '0 0 3px 3px' }} />
+        <div style={{ ...styles.cornerAccent, bottom: '-2px', right: '-2px', borderWidth: '0 3px 3px 0' }} />
         {children}
     </div>
 );
@@ -578,9 +578,9 @@ export default function ActivityCliffAnalyzer() {
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
                                                     <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound1.activity.toFixed(3)}</span>
                                                     {pair.compound1.activity > pair.compound2.activity ? (
-                                                        <span style={{ marginLeft: '8px', color: '#22c55e' }}>▲</span>
+                                                        <TrendingUp size={12} style={{ marginLeft: '8px', color: '#22c55e' }} />
                                                     ) : (
-                                                        <span style={{ marginLeft: '8px', color: '#ef4444' }}>▼</span>
+                                                        <TrendingDown size={12} style={{ marginLeft: '8px', color: '#ef4444' }} />
                                                     )}
                                                 </div>
                                             </td>
@@ -593,9 +593,9 @@ export default function ActivityCliffAnalyzer() {
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
                                                     <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound2.activity.toFixed(3)}</span>
                                                     {pair.compound2.activity > pair.compound1.activity ? (
-                                                        <span style={{ marginLeft: '8px', color: '#22c55e' }}>▲</span>
+                                                        <TrendingUp size={12} style={{ marginLeft: '8px', color: '#22c55e' }} />
                                                     ) : (
-                                                        <span style={{ marginLeft: '8px', color: '#ef4444' }}>▼</span>
+                                                        <TrendingDown size={12} style={{ marginLeft: '8px', color: '#ef4444' }} />
                                                     )}
                                                 </div>
                                             </td>
