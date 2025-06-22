@@ -201,7 +201,6 @@ export default function ActivityCliffAnalyzer() {
     const [compounds, setCompounds] = useState<Compound[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string>('');
-    const [similarityThreshold, setSimilarityThreshold] = useState(0.7);
     const [matchedPairs, setMatchedPairs] = useState<MatchedPair[]>([]);
     const [calculatingPairs, setCalculatingPairs] = useState(false);
     const [uploadHover, setUploadHover] = useState(false);
@@ -412,6 +411,7 @@ export default function ActivityCliffAnalyzer() {
     const calculateMatchedPairs = async (compoundList: Compound[]) => {
         setCalculatingPairs(true);
         const pairs: MatchedPair[] = [];
+        const similarityThreshold = 0.7; // Fixed threshold
 
         try {
             const RDKit = await loadRDKit();
@@ -422,7 +422,7 @@ export default function ActivityCliffAnalyzer() {
                     if (similarity >= similarityThreshold) {
                         const activityDiff = Math.abs(compoundList[i].activity - compoundList[j].activity);
                         if (activityDiff === 0) continue;
-                        const cliffScore = similarity / activityDiff;
+                        const cliffScore = activityDiff / (1.01 - similarity);
                         const { svg1, svg2 } = getHighlightedSVGs(RDKit, compoundList[i].smiles, compoundList[j].smiles);
 
                         pairs.push({
@@ -452,12 +452,6 @@ export default function ActivityCliffAnalyzer() {
             processData();
         }
     }, [selectedActivityColumn]);
-
-    useEffect(() => {
-        if (compounds.length > 0) {
-            calculateMatchedPairs(compounds);
-        }
-    }, [similarityThreshold]);
 
     const numericColumns = useMemo(() => {
         if (rawData.length === 0) return [];
@@ -557,26 +551,6 @@ export default function ActivityCliffAnalyzer() {
                                     }} />
                                 </div>
                             </div>
-                        </div>
-                    )}
-
-                    {compounds.length > 0 && (
-                        <div style={{ marginTop: '24px' }}>
-                            <label style={styles.label}>
-                                SIMILARITY THRESHOLD: {similarityThreshold.toFixed(2)}
-                            </label>
-                            <input
-                                type="range"
-                                min="0.5"
-                                max="0.95"
-                                step="0.05"
-                                value={similarityThreshold}
-                                onChange={(e) => setSimilarityThreshold(parseFloat(e.target.value))}
-                                style={{
-                                    ...styles.rangeSlider,
-                                    background: `linear-gradient(to right, #10b981 0%, #10b981 ${(similarityThreshold - 0.5) / 0.45 * 100}%, rgba(255,255,255,0.2) ${(similarityThreshold - 0.5) / 0.45 * 100}%, rgba(255,255,255,0.2) 100%)`
-                                }}
-                            />
                         </div>
                     )}
 
