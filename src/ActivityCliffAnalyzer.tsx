@@ -7,7 +7,6 @@ interface Compound {
     smiles: string;
     activity: number;
     id: string;
-    svg?: string;
 }
 
 interface MatchedPair {
@@ -128,7 +127,7 @@ const styles = {
         fontWeight: 'normal'
     },
     td: {
-        padding: '12px 16px',
+        padding: '16px 20px',
         borderBottom: '1px solid #fff'
     },
     row: {
@@ -145,9 +144,9 @@ const styles = {
         cursor: 'pointer'
     },
     molImg: {
-        width: '100px',
-        height: '80px',
-        border: '1px solid #fff'
+        width: '200px',
+        height: '160px',
+        border: 'none'
     },
     progressBar: {
         width: '64px',
@@ -294,9 +293,17 @@ export default function ActivityCliffAnalyzer() {
                 }
             }
 
+            const drawingParams = {
+                width: 200,
+                height: 150,
+                backgroundColour: [0, 0, 0], // Black background
+                atomColourPalette: {
+                    6: [0.25, 0.25, 0.25],   // C - Light grey
+                },
+            };
             const colour = [0, 1, 0];
-            const svg1 = mol1.get_svg_with_highlights(JSON.stringify({ ...match1, highlightColour: colour }));
-            const svg2 = mol2.get_svg_with_highlights(JSON.stringify({ ...match2, highlightColour: colour }));
+            const svg1 = mol1.get_svg_with_highlights(JSON.stringify({ ...match1, ...drawingParams, highlightColour: colour }));
+            const svg2 = mol2.get_svg_with_highlights(JSON.stringify({ ...match2, ...drawingParams, highlightColour: colour }));
             return { svg1, svg2 };
         } catch (e) {
             console.error('highlight failed', e);
@@ -377,26 +384,14 @@ export default function ActivityCliffAnalyzer() {
         if (!selectedActivityColumn || !smilesColumn) return;
 
         try {
-            const RDKit = await loadRDKit();
             const processedCompounds: Compound[] = rawData
                 .filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined)
                 .map((row, idx) => {
                     const smiles = String(row[smilesColumn]).trim();
-                    let svg = null;
-                    try {
-                        const mol = RDKit.get_mol(smiles);
-                        if (mol && mol.is_valid()) {
-                            svg = mol.get_svg();
-                            mol.delete();
-                        }
-                    } catch (e) {
-                        console.error('RDKit draw failed', e);
-                    }
                     return {
                         smiles,
                         activity: parseFloat(row[selectedActivityColumn]),
                         id: `compound_${idx + 1}`,
-                        svg
                     } as Compound;
                 })
                 .filter(c => !isNaN(c.activity) && c.smiles.length > 0);
@@ -631,10 +626,8 @@ export default function ActivityCliffAnalyzer() {
                                     <tr>
                                         <th style={styles.th}>RANK</th>
                                         <th style={styles.th}>COMPOUND_1</th>
-                                        <th style={styles.th}>RENDER_1</th>
                                         <th style={styles.th}>{selectedActivityColumn}_1</th>
                                         <th style={styles.th}>COMPOUND_2</th>
-                                        <th style={styles.th}>RENDER_2</th>
                                         <th style={styles.th}>{selectedActivityColumn}_2</th>
                                         <th style={styles.th}>SIMILARITY</th>
                                         <th style={styles.th}>ΔACTIVITY</th>
@@ -650,18 +643,16 @@ export default function ActivityCliffAnalyzer() {
                                             </td>
                                             <td style={styles.td}>
                                                 <div
+                                                    style={styles.molImg}
+                                                    dangerouslySetInnerHTML={{ __html: pair.svg1 || '' }}
+                                                />
+                                                <div
                                                     style={styles.smiles}
                                                     title={pair.compound1.smiles}
                                                     onClick={() => navigator.clipboard.writeText(pair.compound1.smiles)}
                                                 >
                                                     {pair.compound1.smiles}
                                                 </div>
-                                            </td>
-                                            <td style={styles.td}>
-                                                <div
-                                                    style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.svg1 || '' }}
-                                                />
                                             </td>
                                             <td style={styles.td}>
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -675,18 +666,16 @@ export default function ActivityCliffAnalyzer() {
                                             </td>
                                             <td style={styles.td}>
                                                 <div
+                                                    style={styles.molImg}
+                                                    dangerouslySetInnerHTML={{ __html: pair.svg2 || '' }}
+                                                />
+                                                <div
                                                     style={styles.smiles}
                                                     title={pair.compound2.smiles}
                                                     onClick={() => navigator.clipboard.writeText(pair.compound2.smiles)}
                                                 >
                                                     {pair.compound2.smiles}
                                                 </div>
-                                            </td>
-                                            <td style={styles.td}>
-                                                <div
-                                                    style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.svg2 || '' }}
-                                                />
                                             </td>
                                             <td style={styles.td}>
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
