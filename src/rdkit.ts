@@ -14,7 +14,9 @@ export function loadRDKit(): Promise<RDKitModule> {
     return Promise.resolve((window as any).RDKit as RDKitModule);
   }
   if (!initPromise) {
-    initPromise = initRDKitModule().then((instance: RDKitModule) => {
+    initPromise = initRDKitModule({
+      locateFile: () => `${process.env.PUBLIC_URL || ''}/static/js/RDKit_minimal.wasm`,
+    }).then((instance: RDKitModule) => {
       (window as any).RDKit = instance;
       console.log('RDKit version:', instance.version());
       return instance;
