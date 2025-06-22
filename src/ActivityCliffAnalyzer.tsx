@@ -6,6 +6,7 @@ interface Compound {
     smiles: string;
     activity: number;
     id: string;
+    svg: string;
 }
 
 interface MatchedPair {
@@ -154,6 +155,17 @@ const styles = {
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap' as const
     },
+    molContainer: {
+        display: 'flex',
+        flexDirection: 'column' as const,
+        alignItems: 'center',
+        cursor: 'pointer'
+    },
+    molSvg: {
+        width: '120px',
+        height: '80px',
+        marginBottom: '4px'
+    },
     progressBar: {
         width: '64px',
         height: '4px',
@@ -277,6 +289,14 @@ export default function ActivityCliffAnalyzer() {
         }
     };
 
+    const copySmiles = (text: string) => {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).catch(err => {
+                console.error('Failed to copy SMILES:', err);
+            });
+        }
+    };
+
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
@@ -347,11 +367,26 @@ export default function ActivityCliffAnalyzer() {
         try {
             const processedCompounds: Compound[] = rawData
                 .filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined)
-                .map((row, idx) => ({
-                    smiles: String(row[smilesColumn]).trim(),
-                    activity: parseFloat(row[selectedActivityColumn]),
-                    id: `compound_${idx + 1}`
-                }))
+                .map((row, idx) => {
+                    const smiles = String(row[smilesColumn]).trim();
+                    const activity = parseFloat(row[selectedActivityColumn]);
+                    let svg = '';
+                    try {
+                        const mol = RDKitModule.get_mol(smiles);
+                        if (mol) {
+                            svg = mol.get_svg(120, 80);
+                            mol.delete();
+                        }
+                    } catch (e) {
+                        console.warn('Failed to generate SVG for', smiles);
+                    }
+                    return {
+                        smiles,
+                        activity,
+                        id: `compound_${idx + 1}`,
+                        svg
+                    } as Compound;
+                })
                 .filter(c => !isNaN(c.activity) && c.smiles.length > 0);
 
             if (processedCompounds.length === 0) {
@@ -606,8 +641,16 @@ export default function ActivityCliffAnalyzer() {
                                                 {String(idx + 1).padStart(3, '0')}
                                             </td>
                                             <td style={styles.td}>
-                                                <div style={styles.smiles} title={pair.compound1.smiles}>
-                                                    {pair.compound1.smiles}
+                                                <div
+                                                    style={styles.molContainer}
+                                                    onClick={() => copySmiles(pair.compound1.smiles)}
+                                                    title="Click to copy SMILES"
+                                                >
+                                                    <div
+                                                        dangerouslySetInnerHTML={{ __html: pair.compound1.svg }}
+                                                        style={styles.molSvg}
+                                                    />
+                                                    <div style={styles.smiles}>{pair.compound1.smiles}</div>
                                                 </div>
                                             </td>
                                             <td style={styles.td}>
@@ -621,8 +664,16 @@ export default function ActivityCliffAnalyzer() {
                                                 </div>
                                             </td>
                                             <td style={styles.td}>
-                                                <div style={styles.smiles} title={pair.compound2.smiles}>
-                                                    {pair.compound2.smiles}
+                                                <div
+                                                    style={styles.molContainer}
+                                                    onClick={() => copySmiles(pair.compound2.smiles)}
+                                                    title="Click to copy SMILES"
+                                                >
+                                                    <div
+                                                        dangerouslySetInnerHTML={{ __html: pair.compound2.svg }}
+                                                        style={styles.molSvg}
+                                                    />
+                                                    <div style={styles.smiles}>{pair.compound2.smiles}</div>
                                                 </div>
                                             </td>
                                             <td style={styles.td}>
