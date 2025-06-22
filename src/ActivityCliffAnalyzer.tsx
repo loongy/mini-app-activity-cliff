@@ -180,10 +180,10 @@ const styles = {
 // Custom terminal panel component
 const TerminalPanel: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style = {} }) => (
     <div style={{ ...styles.panel, ...style }}>
-        <div style={{ ...styles.cornerAccent, top: '-8px', left: '-8px', borderWidth: '2px 0 0 2px' }} />
-        <div style={{ ...styles.cornerAccent, top: '-8px', right: '-8px', borderWidth: '2px 2px 0 0' }} />
-        <div style={{ ...styles.cornerAccent, bottom: '-8px', left: '-8px', borderWidth: '0 0 2px 2px' }} />
-        <div style={{ ...styles.cornerAccent, bottom: '-8px', right: '-8px', borderWidth: '0 2px 2px 0' }} />
+        <div style={{ ...styles.cornerAccent, top: '-2px', left: '-2px', borderWidth: '3px 0 0 3px' }} />
+        <div style={{ ...styles.cornerAccent, top: '-2px', right: '-2px', borderWidth: '3px 3px 0 0' }} />
+        <div style={{ ...styles.cornerAccent, bottom: '-2px', left: '-2px', borderWidth: '0 0 3px 3px' }} />
+        <div style={{ ...styles.cornerAccent, bottom: '-2px', right: '-2px', borderWidth: '0 3px 3px 0' }} />
         {children}
     </div>
 );
