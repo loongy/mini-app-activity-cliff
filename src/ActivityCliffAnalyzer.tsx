@@ -454,7 +454,7 @@ export default function ActivityCliffAnalyzer() {
                     if (similarity >= similarityThreshold) {
                         const activityDiff = Math.abs(compoundList[i].activity - compoundList[j].activity);
                         if (activityDiff === 0) continue;
-                        const cliffScore = activityDiff / (1.0 - similarity);
+                        const cliffScore = similarity * activityDiff;
                         const { svg1, svg2 } = getHighlightedSVGs(RDKit, compoundList[i].smiles, compoundList[j].smiles);
 
                         pairs.push({
