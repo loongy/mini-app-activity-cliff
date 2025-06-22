@@ -44,3 +44,42 @@ You don’t have to ever use `eject`. The curated feature set is suitable for sm
 You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
 
 To learn React, check out the [React documentation](https://reactjs.org/).
+
+## RDKit.js Initialization Example
+
+This project includes a small helper to load the RDKit.js WebAssembly module.
+Calling `loadRDKit()` will attach the initialized module to `window.RDKit` and
+log the version to the console.
+
+```ts
+import { loadRDKit } from './rdkit';
+
+loadRDKit().then((RDKit) => {
+  console.log('RDKit version', RDKit.version());
+});
+```
+
+When bundling with Webpack&nbsp;5 (used by Create React App) you may see errors
+about missing Node core modules such as `fs` or `crypto`. The RDKit.js build
+targets the browser and those modules are not required. Configure fallbacks
+in `craco.config.js` and run the app with `craco`:
+
+```js
+// craco.config.js
+module.exports = {
+  webpack: {
+    configure: (config) => {
+      config.resolve = config.resolve || {};
+      config.resolve.fallback = {
+        ...(config.resolve.fallback || {}),
+        fs: false,
+        crypto: false,
+      };
+      return config;
+    },
+  },
+};
+```
+
+The project already includes **@craco/craco**, so running `npm start`,
+`npm test`, or `npm run build` will automatically use this configuration.
