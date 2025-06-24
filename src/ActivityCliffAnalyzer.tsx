@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Upload, AlertCircle, TrendingUp, TrendingDown, ChevronDown, Loader2 } from 'lucide-react';
+import { Upload, AlertCircle, TrendingUp, TrendingDown, ChevronDown, Loader2, Search } from 'lucide-react';
 import Papa from 'papaparse';
 import { loadRDKit } from './rdkit';
 
@@ -226,6 +226,12 @@ export default function ActivityCliffAnalyzer() {
     const [hideZeroActivity, setHideZeroActivity] = useState<boolean>(true);
     const [hideSimilarityColumn, setHideSimilarityColumn] = useState<boolean>(false);
     const [sortBy, setSortBy] = useState<string>('score');
+
+    // Search functionality state
+    const [searchQuery, setSearchQuery] = useState<string>('');
+    const [isSearching, setIsSearching] = useState<boolean>(false);
+    const [searchResults, setSearchResults] = useState<MatchedPair[]>([]);
+    const [searchError, setSearchError] = useState<string>('');
 
     // Ref for smooth progress bar animation
     const progressBarRef = useRef<HTMLDivElement>(null);
@@ -639,6 +645,100 @@ export default function ActivityCliffAnalyzer() {
         }
     };
 
+    // Search functionality using RDKit substructure matching
+    const performSearch = async () => {
+        if (!searchQuery.trim() || matchedPairs.length === 0) return;
+
+        setIsSearching(true);
+        setSearchError('');
+        setSearchResults([]);
+
+        try {
+            const RDKit = await loadRDKit();
+
+            // Create query molecule (SMARTS)
+            const qmol = RDKit.get_qmol(searchQuery.trim());
+            if (!qmol) {
+                throw new Error('Invalid SMILES/SMARTS query');
+            }
+
+            const matchingPairs: MatchedPair[] = [];
+
+            for (const pair of matchedPairs) {
+                // Check if query matches either compound in the pair
+                const mol1 = RDKit.get_mol(pair.compound1.smiles);
+                const mol2 = RDKit.get_mol(pair.compound2.smiles);
+
+                if (!mol1 || !mol2) {
+                    if (mol1) mol1.delete();
+                    if (mol2) mol2.delete();
+                    continue;
+                }
+
+                // Check for substructure matches
+                const match1 = JSON.parse(mol1.get_substruct_match(qmol));
+                const match2 = JSON.parse(mol2.get_substruct_match(qmol));
+
+                if ((match1 || match2) && ((match1["bonds"] && match1["bonds"].length > 0) || (match2["bonds"] && match2["bonds"].length > 0))) {
+                    // Create highlighted SVGs for matching compounds
+                    const highlightedSvg1 = match1
+                        ? getHighlightedSVG(RDKit, mol1, match1)
+                        : pair.compound1.svg;
+
+                    const highlightedSvg2 = match2
+                        ? getHighlightedSVG(RDKit, mol2, match2)
+                        : pair.compound2.svg;
+
+                    matchingPairs.push({
+                        ...pair,
+                        compound1: { ...pair.compound1, svg: highlightedSvg1 },
+                        compound2: { ...pair.compound2, svg: highlightedSvg2 }
+                    });
+                }
+
+                mol1.delete();
+                mol2.delete();
+            }
+
+            qmol.delete();
+            setSearchResults(matchingPairs);
+
+        } catch (err) {
+            setSearchError('Search error: ' + (err as Error).message);
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    // Generate highlighted SVG for substructure matches
+    const getHighlightedSVG = (RDKit: any, mol: any, match: any): string => {
+        try {
+            const drawingParams = {
+                width: 200,
+                height: 150,
+                backgroundColour: [0, 0, 0, 0], // Black background
+                atomColourPalette: {
+                    6: [0.25, 0.25, 0.25],   // C - Light grey
+                },
+                highlightColour: [1, 0.5, 0, 0.75], // Orange highlight for matches
+                // atoms: match["atoms"],
+                bonds: match["bonds"]
+            };
+
+            const svg = mol.get_svg_with_highlights(JSON.stringify(drawingParams));
+            return svg;
+        } catch (e) {
+            console.error('Highlighted SVG generation failed', e);
+            return getCompoundSVG(RDKit, mol ? mol.get_smiles() : '');
+        }
+    };
+
+    // Handle search form submission
+    const handleSearchSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        performSearch();
+    };
+
     return (
         <div style={styles.app}>
             <div style={styles.container}>
@@ -951,108 +1051,227 @@ export default function ActivityCliffAnalyzer() {
                             </div>
                         </div>
 
-                        <div style={{ overflowX: 'auto' }}>
-                            <table style={styles.table}>
-                                <thead>
-                                    <tr>
-                                        <th style={styles.th}>RANK</th>
-                                        <th style={styles.th}>COMPOUND_1</th>
-                                        <th style={styles.th}>{selectedActivityColumn}_1</th>
-                                        <th style={styles.th}>COMPOUND_2</th>
-                                        <th style={styles.th}>{selectedActivityColumn}_2</th>
-                                        {!hideSimilarityColumn && <th style={styles.th}>SIMILARITY</th>}
-                                        <th style={styles.th}>ΔACTIVITY</th>
-                                        <th style={styles.th}>FOLD CHANGE</th>
-                                        <th style={styles.th}>CLIFF_SCORE</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {sortedMatchedPairs.slice(0, 50).map((pair, idx) => (
-                                        <tr key={idx} style={styles.row} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'}
-                                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                            <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.7)' }}>
-                                                {String(idx + 1).padStart(3, '0')}
-                                            </td>
-                                            <td style={styles.td}>
-                                                <div
-                                                    style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.compound1.svg }}
-                                                />
-                                                <div
-                                                    style={styles.smiles}
-                                                    title={copiedSmiles === pair.compound1.smiles ? "copied" : "click to copy"}
-                                                    onClick={() => handleSmilesCopy(pair.compound1.smiles)}
-                                                >
-                                                    {pair.compound1.smiles}
-                                                </div>
-                                                <div style={styles.compoundId}>
-                                                    COMPOUND {pair.compound1.compoundId}
-                                                </div>
-                                            </td>
-                                            <td style={styles.td}>
-                                                <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                    <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound1.activity.toFixed(3)}</span>
-                                                    {pair.compound1.activity > pair.compound2.activity ? (
-                                                        <TrendingUp size={12} style={{ marginLeft: '8px', color: '#22c55e' }} />
-                                                    ) : (
-                                                        <TrendingDown size={12} style={{ marginLeft: '8px', color: '#ef4444' }} />
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td style={styles.td}>
-                                                <div
-                                                    style={styles.molImg}
-                                                    dangerouslySetInnerHTML={{ __html: pair.compound2.svg }}
-                                                />
-                                                <div
-                                                    style={styles.smiles}
-                                                    title={copiedSmiles === pair.compound2.smiles ? "copied" : "click to copy"}
-                                                    onClick={() => handleSmilesCopy(pair.compound2.smiles)}
-                                                >
-                                                    {pair.compound2.smiles}
-                                                </div>
-                                                <div style={styles.compoundId}>
-                                                    COMPOUND {pair.compound2.compoundId}
-                                                </div>
-                                            </td>
-                                            <td style={styles.td}>
-                                                <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                    <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound2.activity.toFixed(3)}</span>
-                                                    {pair.compound2.activity > pair.compound1.activity ? (
-                                                        <TrendingUp size={12} style={{ marginLeft: '8px', color: '#22c55e' }} />
-                                                    ) : (
-                                                        <TrendingDown size={12} style={{ marginLeft: '8px', color: '#ef4444' }} />
-                                                    )}
-                                                </div>
-                                            </td>
-                                            {!hideSimilarityColumn && (
+                        {/* Search Bar */}
+                        <div style={{ marginBottom: '24px', padding: '16px', border: '1px solid rgba(255, 255, 255, 0.2)', backgroundColor: 'rgba(255, 255, 255, 0.02)' }}>
+                            <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.7)', marginBottom: '12px', textTransform: 'uppercase' }}>
+                                SUBSTRUCTURE SEARCH
+                            </div>
+                            <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                <div style={{ flex: 1, position: 'relative' }}>
+                                    <input
+                                        type="text"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Enter SMILES/SMARTS query (e.g., c1ccccc1 for benzene ring)"
+                                        style={{
+                                            ...styles.input,
+                                            width: '100%',
+                                            fontSize: '12px',
+                                            fontFamily: 'monospace'
+                                        }}
+                                        disabled={isSearching}
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={isSearching || !searchQuery.trim()}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: isSearching || !searchQuery.trim() ? 'rgba(255, 255, 255, 0.1)' : '#22c55e',
+                                        color: '#fff',
+                                        border: 'none',
+                                        cursor: isSearching || !searchQuery.trim() ? 'not-allowed' : 'pointer',
+                                        fontSize: '12px',
+                                        fontFamily: "'Courier New', Courier, monospace",
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        transition: 'background-color 0.2s'
+                                    }}
+                                >
+                                    {isSearching ? (
+                                        <>
+                                            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                                            SEARCHING...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Search size={14} />
+                                            SEARCH
+                                        </>
+                                    )}
+                                </button>
+                                {searchResults.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSearchQuery('');
+                                            setSearchResults([]);
+                                            setSearchError('');
+                                        }}
+                                        style={{
+                                            padding: '8px 12px',
+                                            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                                            color: '#fff',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            fontSize: '12px',
+                                            fontFamily: "'Courier New', Courier, monospace"
+                                        }}
+                                    >
+                                        CLEAR
+                                    </button>
+                                )}
+                            </form>
+                            {searchError && (
+                                <div style={{ ...styles.error, marginTop: '12px' }}>
+                                    <AlertCircle size={14} style={{ marginRight: '8px' }} />
+                                    {searchError}
+                                </div>
+                            )}
+                            {searchResults.length > 0 && (
+                                <div style={{ fontSize: '12px', color: '#22c55e', marginTop: '12px' }}>
+                                    ► FOUND {searchResults.length} MATCHING PAIRS
+                                </div>
+                            )}
+                        </div>
+
+                        {isSearching && (
+                            <div style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                padding: '48px',
+                                border: '1px dashed rgba(255, 255, 255, 0.3)',
+                                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                                marginBottom: '24px'
+                            }}>
+                                <Loader2 size={32} style={{
+                                    marginBottom: '16px',
+                                    color: '#22c55e',
+                                    animation: 'spin 1s linear infinite'
+                                }} />
+                                <div style={{
+                                    fontSize: '14px',
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    marginBottom: '8px'
+                                }}>
+                                    SEARCHING FOR SUBSTRUCTURE MATCHES...
+                                </div>
+                                <div style={{
+                                    fontSize: '12px',
+                                    color: 'rgba(255, 255, 255, 0.5)',
+                                    textAlign: 'center'
+                                }}>
+                                    Analyzing molecular structures and highlighting matches...
+                                </div>
+                            </div>
+                        )}
+
+                        {!isSearching && (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={styles.table}>
+                                    <thead>
+                                        <tr>
+                                            <th style={styles.th}>RANK</th>
+                                            <th style={styles.th}>COMPOUND_1</th>
+                                            <th style={styles.th}>{selectedActivityColumn}_1</th>
+                                            <th style={styles.th}>COMPOUND_2</th>
+                                            <th style={styles.th}>{selectedActivityColumn}_2</th>
+                                            {!hideSimilarityColumn && <th style={styles.th}>SIMILARITY</th>}
+                                            <th style={styles.th}>ΔACTIVITY</th>
+                                            <th style={styles.th}>FOLD CHANGE</th>
+                                            <th style={styles.th}>CLIFF_SCORE</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(searchResults.length > 0 ? searchResults : sortedMatchedPairs).slice(0, 50).map((pair, idx) => (
+                                            <tr key={idx} style={styles.row} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'}
+                                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.7)' }}>
+                                                    {String(idx + 1).padStart(3, '0')}
+                                                </td>
                                                 <td style={styles.td}>
-                                                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                        <div style={styles.progressBar}>
-                                                            <div style={{ ...styles.progressFill, width: `${pair.similarity * 100}%` }} />
-                                                        </div>
-                                                        <span style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                                                            {(pair.similarity * 100).toFixed(1)}%
-                                                        </span>
+                                                    <div
+                                                        style={styles.molImg}
+                                                        dangerouslySetInnerHTML={{ __html: pair.compound1.svg }}
+                                                    />
+                                                    <div
+                                                        style={styles.smiles}
+                                                        title={copiedSmiles === pair.compound1.smiles ? "copied" : "click to copy"}
+                                                        onClick={() => handleSmilesCopy(pair.compound1.smiles)}
+                                                    >
+                                                        {pair.compound1.smiles}
+                                                    </div>
+                                                    <div style={styles.compoundId}>
+                                                        COMPOUND {pair.compound1.compoundId}
                                                     </div>
                                                 </td>
-                                            )}
-                                            <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
-                                                {pair.activityDiff.toFixed(3)}
-                                            </td>
-                                            <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
-                                                {pair.foldChange.toFixed(3)}
-                                            </td>
-                                            <td style={styles.td}>
-                                                <span style={styles.cliffScore}>
-                                                    {pair.cliffScore.toFixed(3)}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                                <td style={styles.td}>
+                                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound1.activity.toFixed(3)}</span>
+                                                        {pair.compound1.activity > pair.compound2.activity ? (
+                                                            <TrendingUp size={12} style={{ marginLeft: '8px', color: '#22c55e' }} />
+                                                        ) : (
+                                                            <TrendingDown size={12} style={{ marginLeft: '8px', color: '#ef4444' }} />
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <div
+                                                        style={styles.molImg}
+                                                        dangerouslySetInnerHTML={{ __html: pair.compound2.svg }}
+                                                    />
+                                                    <div
+                                                        style={styles.smiles}
+                                                        title={copiedSmiles === pair.compound2.smiles ? "copied" : "click to copy"}
+                                                        onClick={() => handleSmilesCopy(pair.compound2.smiles)}
+                                                    >
+                                                        {pair.compound2.smiles}
+                                                    </div>
+                                                    <div style={styles.compoundId}>
+                                                        COMPOUND {pair.compound2.compoundId}
+                                                    </div>
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)' }}>{pair.compound2.activity.toFixed(3)}</span>
+                                                        {pair.compound2.activity > pair.compound1.activity ? (
+                                                            <TrendingUp size={12} style={{ marginLeft: '8px', color: '#22c55e' }} />
+                                                        ) : (
+                                                            <TrendingDown size={12} style={{ marginLeft: '8px', color: '#ef4444' }} />
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                {!hideSimilarityColumn && (
+                                                    <td style={styles.td}>
+                                                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                            <div style={styles.progressBar}>
+                                                                <div style={{ ...styles.progressFill, width: `${pair.similarity * 100}%` }} />
+                                                            </div>
+                                                            <span style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                                                                {(pair.similarity * 100).toFixed(1)}%
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                )}
+                                                <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
+                                                    {pair.activityDiff.toFixed(3)}
+                                                </td>
+                                                <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
+                                                    {pair.foldChange.toFixed(3)}
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <span style={styles.cliffScore}>
+                                                        {pair.cliffScore.toFixed(3)}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </TerminalPanel>
                 )}
             </div>
