@@ -7,6 +7,7 @@ interface Compound {
     smiles: string;
     activity: number;
     id: string;
+    compoundId: string;
     svg: string;
 }
 
@@ -15,6 +16,7 @@ interface MatchedPair {
     compound2: Compound;
     similarity: number;
     activityDiff: number;
+    foldChange: number;
     cliffScore: number;
 }
 
@@ -142,6 +144,13 @@ const styles = {
         whiteSpace: 'nowrap' as const,
         cursor: 'pointer'
     },
+    compoundId: {
+        fontSize: '11px',
+        color: 'rgba(255, 255, 255, 0.6)',
+        textAlign: 'center' as const,
+        marginTop: '4px',
+        fontFamily: "'Courier New', Courier, monospace"
+    },
     molImg: {
         width: '200px',
         height: '160px',
@@ -210,8 +219,13 @@ export default function ActivityCliffAnalyzer() {
     const [rawData, setRawData] = useState<any[]>([]);
     const [columns, setColumns] = useState<string[]>([]);
     const [smilesColumn, setSmilesColumn] = useState<string>('');
+    const [compoundIdColumn, setCompoundIdColumn] = useState<string>('');
+    const [autoDetectedCompoundIdColumn, setAutoDetectedCompoundIdColumn] = useState<string>('');
     const [selectedActivityColumn, setSelectedActivityColumn] = useState<string>('');
     const [copiedSmiles, setCopiedSmiles] = useState<string>('');
+    const [hideZeroActivity, setHideZeroActivity] = useState<boolean>(true);
+    const [hideSimilarityColumn, setHideSimilarityColumn] = useState<boolean>(false);
+    const [sortBy, setSortBy] = useState<string>('score');
 
     // Ref for smooth progress bar animation
     const progressBarRef = useRef<HTMLDivElement>(null);
@@ -282,7 +296,7 @@ export default function ActivityCliffAnalyzer() {
                     6: [0.25, 0.25, 0.25],   // C - Light grey
                 },
             };
-            
+
             const svg = mol.get_svg_with_highlights(JSON.stringify(drawingParams));
             return svg;
         } catch (e) {
@@ -303,6 +317,8 @@ export default function ActivityCliffAnalyzer() {
         setRawData([]);
         setColumns([]);
         setSmilesColumn('');
+        setCompoundIdColumn('');
+        setAutoDetectedCompoundIdColumn('');
         setSelectedActivityColumn('');
         setMatchedPairs([]);
         setDuplicateStats(null);
@@ -348,6 +364,25 @@ export default function ActivityCliffAnalyzer() {
                             setSmilesColumn(detectedSmilesCol);
                         }
 
+                        // Auto-detect compound ID column
+                        const detectedCompoundIdCol = headers.find(h => {
+                            const lower = h.toLowerCase();
+                            return lower.includes('id') ||
+                                lower.includes('index') ||
+                                lower.includes('compound') ||
+                                lower.includes('name') ||
+                                lower.includes('identifier') ||
+                                lower === 'compound_id' ||
+                                lower === 'compound_name' ||
+                                lower === 'molecule_id' ||
+                                lower === 'mol_id';
+                        });
+
+                        if (detectedCompoundIdCol) {
+                            setCompoundIdColumn(detectedCompoundIdCol);
+                            setAutoDetectedCompoundIdColumn(detectedCompoundIdCol);
+                        }
+
                         setLoading(false);
                     } catch (err) {
                         setError('Error parsing CSV: ' + (err as Error).message);
@@ -366,14 +401,17 @@ export default function ActivityCliffAnalyzer() {
 
         try {
             // First, collect all compounds with their activities
-            const compoundMap = new Map<string, { smiles: string; activities: number[]; id: string }>();
-            
+            const compoundMap = new Map<string, { smiles: string; activities: number[]; id: string; compoundId: string }>();
+
             rawData
                 .filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined)
                 .forEach((row, idx) => {
                     const smiles = String(row[smilesColumn]).trim();
                     const activity = parseFloat(row[selectedActivityColumn]);
-                    
+                    const compoundId = compoundIdColumn && row[compoundIdColumn]
+                        ? String(row[compoundIdColumn]).trim()
+                        : `compound_${idx + 1}`;
+
                     if (!isNaN(activity) && smiles.length > 0) {
                         if (compoundMap.has(smiles)) {
                             // Add to existing compound's activities
@@ -383,7 +421,8 @@ export default function ActivityCliffAnalyzer() {
                             compoundMap.set(smiles, {
                                 smiles,
                                 activities: [activity],
-                                id: `compound_${idx + 1}`
+                                id: `compound_${idx + 1}`,
+                                compoundId: compoundId,
                             });
                         }
                     }
@@ -397,6 +436,7 @@ export default function ActivityCliffAnalyzer() {
                         smiles: compound.smiles,
                         activity: avgActivity,
                         id: `compound_${idx + 1}`,
+                        compoundId: compound.compoundId,
                     };
                 });
 
@@ -410,7 +450,7 @@ export default function ActivityCliffAnalyzer() {
             const totalEntries = rawData.filter(row => row[smilesColumn] && row[selectedActivityColumn] !== null && row[selectedActivityColumn] !== undefined).length;
             const uniqueCompounds = processedCompoundsWithoutSvg.length;
             const duplicatesRemoved = totalEntries - uniqueCompounds;
-            
+
             setDuplicateStats({ totalEntries, uniqueCompounds, duplicatesRemoved });
 
             // Load RDKit and generate SVGs for all compounds
@@ -438,34 +478,36 @@ export default function ActivityCliffAnalyzer() {
 
         try {
             const RDKit = await loadRDKit();
-            
+
             const totalComparisons = (compoundList.length * (compoundList.length - 1)) / 2;
             let completedComparisons = 0;
             let lastTextUpdate = 0;
-            
+
             // Initialize progress bar
             updateProgressSmoothly(0, totalComparisons);
-            
-            const processChunk = async (chunk: {i: number, j: number}[]) => {
+
+            const processChunk = async (chunk: { i: number, j: number }[]) => {
                 for (const { i, j } of chunk) {
                     const similarity = calculateSimilarity(RDKit, compoundList[i].smiles, compoundList[j].smiles);
 
                     if (similarity >= similarityThreshold) {
                         const activityDiff = Math.abs(compoundList[i].activity - compoundList[j].activity);
                         if (activityDiff === 0) continue;
+                        const foldChange = compoundList[i].activity > compoundList[j].activity ? compoundList[i].activity / compoundList[j].activity : compoundList[j].activity / compoundList[i].activity;
                         const cliffScore = similarity * similarity * similarity * activityDiff;
-                        
+
                         pairs.push({
                             compound1: { ...compoundList[i] },
                             compound2: { ...compoundList[j] },
                             similarity,
                             activityDiff,
+                            foldChange,
                             cliffScore,
                         });
                     }
                     completedComparisons++;
                 }
-                
+
                 // Update progress bar smoothly every frame
                 if (progressAnimationRef.current) {
                     cancelAnimationFrame(progressAnimationRef.current);
@@ -473,7 +515,7 @@ export default function ActivityCliffAnalyzer() {
                 progressAnimationRef.current = requestAnimationFrame(() => {
                     updateProgressSmoothly(completedComparisons, totalComparisons);
                 });
-                
+
                 // Update text less frequently to avoid React batching issues
                 const now = performance.now();
                 if (now - lastTextUpdate >= 100) { // Update text every 100ms
@@ -482,7 +524,7 @@ export default function ActivityCliffAnalyzer() {
                 }
             };
 
-            const allComparisons: {i: number, j: number}[] = [];
+            const allComparisons: { i: number, j: number }[] = [];
             for (let i = 0; i < compoundList.length; i++) {
                 for (let j = i + 1; j < compoundList.length; j++) {
                     allComparisons.push({ i, j });
@@ -527,7 +569,7 @@ export default function ActivityCliffAnalyzer() {
                 processData();
             });
         }
-    }, [selectedActivityColumn]);
+    }, [selectedActivityColumn, compoundIdColumn]);
 
     // Cleanup animation frames on unmount
     useEffect(() => {
@@ -558,6 +600,30 @@ export default function ActivityCliffAnalyzer() {
         minute: '2-digit',
         hour12: false
     });
+
+    // Filter matched pairs based on zero activity setting
+    const filteredMatchedPairs = useMemo(() => {
+        if (!hideZeroActivity) return matchedPairs;
+        return matchedPairs.filter(pair =>
+            pair.compound1.activity !== 0 && pair.compound2.activity !== 0
+        );
+    }, [matchedPairs, hideZeroActivity]);
+
+    // Sort matched pairs based on selected sort option
+    const sortedMatchedPairs = useMemo(() => {
+        const sorted = [...filteredMatchedPairs];
+        switch (sortBy) {
+            case 'activity':
+                return sorted.sort((a, b) => b.activityDiff - a.activityDiff);
+            case 'fold':
+                return sorted.sort((a, b) => b.foldChange - a.foldChange);
+            case 'similarity':
+                return sorted.sort((a, b) => b.similarity - a.similarity);
+            case 'score':
+            default:
+                return sorted.sort((a, b) => b.cliffScore - a.cliffScore);
+        }
+    }, [filteredMatchedPairs, sortBy]);
 
     // Function to handle SMILES copy with tooltip feedback
     const handleSmilesCopy = async (smiles: string) => {
@@ -626,6 +692,37 @@ export default function ActivityCliffAnalyzer() {
                             </div>
 
                             <div>
+                                <label style={styles.label}>
+                                    SELECT COMPOUND ID COLUMN
+                                    {autoDetectedCompoundIdColumn && compoundIdColumn === autoDetectedCompoundIdColumn && (
+                                        <span style={{ color: '#22c55e', marginLeft: '8px' }}>[AUTO-DETECTED]</span>
+                                    )}
+                                </label>
+                                <div style={{ position: 'relative' }}>
+                                    <select
+                                        value={compoundIdColumn}
+                                        onChange={(e) => setCompoundIdColumn(e.target.value)}
+                                        style={styles.select}
+                                    >
+                                        <option value="">-- AUTO-GENERATED IDS --</option>
+                                        {columns.map(col => (
+                                            <option key={col} value={col}>
+                                                {col}{col === autoDetectedCompoundIdColumn ? ' [AUTO-DETECTED]' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown size={16} style={{
+                                        position: 'absolute',
+                                        right: '12px',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        color: 'rgba(255, 255, 255, 0.4)',
+                                        pointerEvents: 'none'
+                                    }} />
+                                </div>
+                            </div>
+
+                            <div>
                                 <label style={styles.label}>SELECT ACTIVITY COLUMN</label>
                                 <div style={{ position: 'relative' }}>
                                     <select
@@ -661,29 +758,29 @@ export default function ActivityCliffAnalyzer() {
                     )}
 
                     {loading && (
-                        <div style={{ 
-                            display: 'flex', 
-                            flexDirection: 'column', 
-                            alignItems: 'center', 
-                            marginTop: '24px', 
+                        <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            marginTop: '24px',
                             padding: '32px',
                             border: '1px dashed rgba(255, 255, 255, 0.3)',
                             backgroundColor: 'rgba(255, 255, 255, 0.02)'
                         }}>
-                            <Loader2 size={32} style={{ 
-                                marginBottom: '16px', 
+                            <Loader2 size={32} style={{
+                                marginBottom: '16px',
                                 color: '#22c55e',
-                                animation: 'spin 1s linear infinite' 
+                                animation: 'spin 1s linear infinite'
                             }} />
-                            <div style={{ 
-                                fontSize: '14px', 
+                            <div style={{
+                                fontSize: '14px',
                                 color: 'rgba(255, 255, 255, 0.7)',
                                 marginBottom: '8px'
                             }}>
                                 PROCESSING CSV FILE...
                             </div>
-                            <div style={{ 
-                                fontSize: '12px', 
+                            <div style={{
+                                fontSize: '12px',
                                 color: 'rgba(255, 255, 255, 0.5)',
                                 textAlign: 'center'
                             }}>
@@ -695,29 +792,29 @@ export default function ActivityCliffAnalyzer() {
                     )}
 
                     {processingData && (
-                        <div style={{ 
-                            display: 'flex', 
-                            flexDirection: 'column', 
-                            alignItems: 'center', 
-                            marginTop: '24px', 
+                        <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            marginTop: '24px',
                             padding: '32px',
                             border: '1px dashed rgba(255, 255, 255, 0.3)',
                             backgroundColor: 'rgba(255, 255, 255, 0.02)'
                         }}>
-                            <div style={{ 
-                                fontSize: '14px', 
+                            <div style={{
+                                fontSize: '14px',
                                 color: 'rgba(255, 255, 255, 0.7)',
                                 marginBottom: '8px'
                             }}>
                                 {calculatingPairs ? 'CALCULATING SIMILARITIES...' : 'PROCESSING COMPOUND DATA...'}
                             </div>
-                            <div style={{ 
-                                fontSize: '12px', 
+                            <div style={{
+                                fontSize: '12px',
                                 color: 'rgba(255, 255, 255, 0.5)',
                                 textAlign: 'center',
                                 marginBottom: calculationProgress ? '16px' : '0'
                             }}>
-                                {calculatingPairs 
+                                {calculatingPairs
                                     ? 'Analyzing molecular similarities and generating activity cliffs...'
                                     : 'Analyzing compounds and calculating similarities...'
                                 }
@@ -726,10 +823,10 @@ export default function ActivityCliffAnalyzer() {
                             </div>
                             {calculationProgress && (
                                 <div style={{ width: '100%', maxWidth: '300px' }}>
-                                    <div style={{ 
-                                        display: 'flex', 
-                                        justifyContent: 'space-between', 
-                                        fontSize: '10px', 
+                                    <div style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        fontSize: '10px',
                                         color: 'rgba(255, 255, 255, 0.5)',
                                         marginBottom: '8px'
                                     }}>
@@ -743,14 +840,14 @@ export default function ActivityCliffAnalyzer() {
                                         borderRadius: '2px',
                                         overflow: 'hidden'
                                     }}>
-                                        <div 
+                                        <div
                                             ref={progressBarRef}
                                             style={{
                                                 width: '0%',
                                                 height: '100%',
                                                 backgroundColor: '#22c55e',
                                                 transition: 'none'
-                                            }} 
+                                            }}
                                         />
                                     </div>
                                 </div>
@@ -762,6 +859,7 @@ export default function ActivityCliffAnalyzer() {
                         <div style={{ marginTop: '24px', fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
                             <div>► COMPOUNDS LOADED: {compounds.length}</div>
                             <div>► ACTIVITY COLUMN: {selectedActivityColumn}</div>
+                            <div>► COMPOUND ID COLUMN: {compoundIdColumn || 'AUTO-GENERATED'}</div>
                             {duplicateStats && duplicateStats.duplicatesRemoved > 0 && (
                                 <div style={{ color: '#f59e0b', marginTop: '4px' }}>
                                     ► DUPLICATES REMOVED: {duplicateStats.duplicatesRemoved} entries → {duplicateStats.uniqueCompounds} unique compounds
@@ -785,9 +883,72 @@ export default function ActivityCliffAnalyzer() {
                             <h2 style={{ fontSize: '14px', letterSpacing: '1px', color: 'rgba(255, 255, 255, 0.7)', margin: 0 }}>
                                 ACTIVITY CLIFF ANALYSIS
                             </h2>
-                            <span style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
-                                SHOWING TOP {Math.min(50, matchedPairs.length)} RESULTS
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                <label style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    fontSize: '12px',
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    cursor: 'pointer'
+                                }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={hideZeroActivity}
+                                        onChange={(e) => setHideZeroActivity(e.target.checked)}
+                                        style={{
+                                            marginRight: '8px',
+                                            width: '14px',
+                                            height: '14px',
+                                            accentColor: '#22c55e'
+                                        }}
+                                    />
+                                    HIDE ZERO ACTIVITY
+                                </label>
+                                <label style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    fontSize: '12px',
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    cursor: 'pointer'
+                                }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={hideSimilarityColumn}
+                                        onChange={(e) => setHideSimilarityColumn(e.target.checked)}
+                                        style={{
+                                            marginRight: '8px',
+                                            width: '14px',
+                                            height: '14px',
+                                            accentColor: '#22c55e'
+                                        }}
+                                    />
+                                    HIDE SIMILARITY COLUMN
+                                </label>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.7)' }}>
+                                        SORT BY:
+                                    </span>
+                                    <select
+                                        value={sortBy}
+                                        onChange={(e) => setSortBy(e.target.value)}
+                                        style={{
+                                            ...styles.select,
+                                            width: 'auto',
+                                            fontSize: '11px',
+                                            padding: '4px 8px',
+                                            minWidth: '100px'
+                                        }}
+                                    >
+                                        <option value="score">CLIFF SCORE</option>
+                                        <option value="activity">ACTIVITY DIFF</option>
+                                        <option value="fold">FOLD CHANGE</option>
+                                        <option value="similarity">SIMILARITY</option>
+                                    </select>
+                                </div>
+                                <span style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                                    SHOWING TOP {Math.min(50, sortedMatchedPairs.length)} RESULTS
+                                </span>
+                            </div>
                         </div>
 
                         <div style={{ overflowX: 'auto' }}>
@@ -799,13 +960,14 @@ export default function ActivityCliffAnalyzer() {
                                         <th style={styles.th}>{selectedActivityColumn}_1</th>
                                         <th style={styles.th}>COMPOUND_2</th>
                                         <th style={styles.th}>{selectedActivityColumn}_2</th>
-                                        <th style={styles.th}>SIMILARITY</th>
+                                        {!hideSimilarityColumn && <th style={styles.th}>SIMILARITY</th>}
                                         <th style={styles.th}>ΔACTIVITY</th>
+                                        <th style={styles.th}>FOLD CHANGE</th>
                                         <th style={styles.th}>CLIFF_SCORE</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {matchedPairs.slice(0, 50).map((pair, idx) => (
+                                    {sortedMatchedPairs.slice(0, 50).map((pair, idx) => (
                                         <tr key={idx} style={styles.row} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'}
                                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
                                             <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.7)' }}>
@@ -822,6 +984,9 @@ export default function ActivityCliffAnalyzer() {
                                                     onClick={() => handleSmilesCopy(pair.compound1.smiles)}
                                                 >
                                                     {pair.compound1.smiles}
+                                                </div>
+                                                <div style={styles.compoundId}>
+                                                    COMPOUND {pair.compound1.compoundId}
                                                 </div>
                                             </td>
                                             <td style={styles.td}>
@@ -846,6 +1011,9 @@ export default function ActivityCliffAnalyzer() {
                                                 >
                                                     {pair.compound2.smiles}
                                                 </div>
+                                                <div style={styles.compoundId}>
+                                                    COMPOUND {pair.compound2.compoundId}
+                                                </div>
                                             </td>
                                             <td style={styles.td}>
                                                 <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -857,18 +1025,23 @@ export default function ActivityCliffAnalyzer() {
                                                     )}
                                                 </div>
                                             </td>
-                                            <td style={styles.td}>
-                                                <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                    <div style={styles.progressBar}>
-                                                        <div style={{ ...styles.progressFill, width: `${pair.similarity * 100}%` }} />
+                                            {!hideSimilarityColumn && (
+                                                <td style={styles.td}>
+                                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                        <div style={styles.progressBar}>
+                                                            <div style={{ ...styles.progressFill, width: `${pair.similarity * 100}%` }} />
+                                                        </div>
+                                                        <span style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                                                            {(pair.similarity * 100).toFixed(1)}%
+                                                        </span>
                                                     </div>
-                                                    <span style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                                                        {(pair.similarity * 100).toFixed(1)}%
-                                                    </span>
-                                                </div>
-                                            </td>
+                                                </td>
+                                            )}
                                             <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
                                                 {pair.activityDiff.toFixed(3)}
+                                            </td>
+                                            <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
+                                                {pair.foldChange.toFixed(3)}
                                             </td>
                                             <td style={styles.td}>
                                                 <span style={styles.cliffScore}>
