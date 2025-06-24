@@ -586,6 +586,13 @@ export default function ActivityCliffAnalyzer() {
         };
     }, []);
 
+    // Re-run search when hideZeroActivity changes
+    useEffect(() => {
+        if (searchResults.length > 0 && searchQuery.trim()) {
+            performSearch();
+        }
+    }, [hideZeroActivity]);
+
     const numericColumns = useMemo(() => {
         if (rawData.length === 0) return [];
 
@@ -631,6 +638,23 @@ export default function ActivityCliffAnalyzer() {
         }
     }, [filteredMatchedPairs, sortBy]);
 
+    // Sort search results based on selected sort option
+    const sortedSearchResults = useMemo(() => {
+        if (searchResults.length === 0) return [];
+        const sorted = [...searchResults];
+        switch (sortBy) {
+            case 'activity':
+                return sorted.sort((a, b) => b.activityDiff - a.activityDiff);
+            case 'fold':
+                return sorted.sort((a, b) => b.foldChange - a.foldChange);
+            case 'similarity':
+                return sorted.sort((a, b) => b.similarity - a.similarity);
+            case 'score':
+            default:
+                return sorted.sort((a, b) => b.cliffScore - a.cliffScore);
+        }
+    }, [searchResults, sortBy]);
+
     // Function to handle SMILES copy with tooltip feedback
     const handleSmilesCopy = async (smiles: string) => {
         try {
@@ -665,6 +689,11 @@ export default function ActivityCliffAnalyzer() {
             const matchingPairs: MatchedPair[] = [];
 
             for (const pair of matchedPairs) {
+                // Apply zero activity filter to search results as well
+                if (hideZeroActivity && (pair.compound1.activity === 0 || pair.compound2.activity === 0)) {
+                    continue;
+                }
+
                 // Check if query matches either compound in the pair
                 const mol1 = RDKit.get_mol(pair.compound1.smiles);
                 const mol2 = RDKit.get_mol(pair.compound2.smiles);
@@ -1185,7 +1214,7 @@ export default function ActivityCliffAnalyzer() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {(searchResults.length > 0 ? searchResults : sortedMatchedPairs).slice(0, 50).map((pair, idx) => (
+                                        {(searchResults.length > 0 ? sortedSearchResults : sortedMatchedPairs).slice(0, 50).map((pair, idx) => (
                                             <tr key={idx} style={styles.row} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'}
                                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
                                                 <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.7)' }}>
@@ -1245,14 +1274,9 @@ export default function ActivityCliffAnalyzer() {
                                                 </td>
                                                 {!hideSimilarityColumn && (
                                                     <td style={styles.td}>
-                                                        <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                            <div style={styles.progressBar}>
-                                                                <div style={{ ...styles.progressFill, width: `${pair.similarity * 100}%` }} />
-                                                            </div>
-                                                            <span style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                                                                {(pair.similarity * 100).toFixed(1)}%
-                                                            </span>
-                                                        </div>
+                                                        <span style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                                                            {(pair.similarity * 100).toFixed(1)}%
+                                                        </span>
                                                     </td>
                                                 )}
                                                 <td style={{ ...styles.td, color: 'rgba(255, 255, 255, 0.9)' }}>
